@@ -18,8 +18,13 @@ const BRAKE = 520; // px/sec^2
 const DRAG = 70; // px/sec^2, applied when coasting
 const STEER_PX_PER_SEC = 240; // lateral speed at full steer
 
+// Far enough along the road that the traffic spawn window (SIM_MARGIN_PX) has road
+// behind the player to spawn into. Starting at x=0 would put the rear spawn edge at
+// negative x, and no traffic would ever approach from behind.
+export const PLAYER_START_X = 1700;
+
 export function createPlayer(road: Road): Player {
-  return { x: 80, y: laneCenterY(road, road.laneCount - 1), speed: 0 };
+  return { x: PLAYER_START_X, y: laneCenterY(road, road.laneCount - 1), speed: 0 };
 }
 
 export function updatePlayer(p: Player, input: InputState, road: Road, dt: number): void {

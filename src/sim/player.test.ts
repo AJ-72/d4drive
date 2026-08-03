@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FIXED_DT } from '../engine/loop';
 import { SPIKE_ROAD } from '../road/road';
-import { createPlayer, updatePlayer, PLAYER_MAX_SPEED } from './player';
+import { createPlayer, updatePlayer, PLAYER_MAX_SPEED, PLAYER_START_X } from './player';
 import type { InputState } from '../input/input';
 
 const IDLE: InputState = { throttle: 0, steer: 0 };
@@ -19,7 +19,7 @@ describe('T4 — player vehicle', () => {
   it('accelerates and travels forward under throttle', () => {
     const p = run(GAS, 1);
     expect(p.speed).toBeGreaterThan(0);
-    expect(p.x).toBeGreaterThan(80);
+    expect(p.x).toBeGreaterThan(PLAYER_START_X);
   });
 
   it('coasts to a stop without reversing through zero', () => {
