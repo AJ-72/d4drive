@@ -351,3 +351,68 @@ zero" requirement reads exactly zero.
 **Next:** T9 (vehicle kinds rendering), T10 (pedestrians), T11 (hot-swap), T12 (arrived),
 T13 (restart), T14 (soak), T15 (overlay). Stop condition 5 (five leaf tasks since last human
 contact) is now due: T5, T6, T7, T8 done — halting at four with a decision outstanding.
+
+---
+
+## T9–T12 — Kinds, pedestrians, hot-swap, arrived · 2026-08-03 · **PASS** · commit `2d5b601`
+
+**57 tests pass, `tsc --noEmit` clean.**
+
+**What changed:** distinct silhouettes per vehicle kind and marked crossings drawn (T9);
+pedestrians with jaywalking, mid-road hesitation, and deliberate roadside stops (T10);
+`setProfile` in-place swap (T11); arrived state (T12). `leaderOf` generalised from
+"vehicle ahead" to an `Obstacle` covering vehicles, the player, and pedestrians.
+
+### Every C3 signal now measurable — 120s, player driving
+
+| signal | Trivandrum | Singapore |
+|---|---|---|
+| centreline straddles | 103 | **0** |
+| sub-length gap accepts | 25 | **0** |
+| cut-ins | 14 | **0** |
+| roadside stops | 30 | **0** |
+| jaywalks | 32 | **0** |
+| lane changes | 70 | 12 |
+| pedestrians | 36 | 43 |
+
+All five Trivandrum bullets fire repeatedly; every Singapore "exactly zero" reads zero.
+
+### Surprising — 1: pedestrians were decoration, and got run over
+
+First implementation counted jaywalks but vehicles drove straight through people — 30px of
+body penetration. Two causes: drivers only reacted once a pedestrian *already* overlapped
+them, leaving no distance to brake in; and pedestrians stepped off the kerb into vehicles
+already alongside.
+
+Fixed by widening the driver's reaction band beyond the vehicle body (drivers watch the
+kerb, not the bumper) and by having pedestrians not step out in front of a vehicle within
+150px that is actually moving.
+
+**Worth stating plainly: a jaywalker nobody brakes for is not a jaywalker.** The counter
+would have read 32 while the screen showed people being driven through, and C3's bullet 5
+would have been "present" and meaningless. This is the same failure shape as T6's
+car-following, where a counter said yes and the behaviour did not exist.
+
+### Surprising — 2: a passing test broke, correctly
+
+The T7/T8 verge test asserted "zero stopped vehicles" after pulling over. T10 added
+*deliberate* roadside stops (Trivandrum `roadsideStopPerMin: 0.9`), so stopped vehicles are
+now a **feature** — C3 bullet 4. The assertion was re-specified to what it always meant:
+zero *involuntary* stops, excluding vehicles in a deliberate roadside stop. A blunt "make
+the test pass" would have deleted the jam check that justified the whole verge decision.
+
+### Surprising — 3: pedestrian density leaked a difference C3 forbids
+
+Singapore produced 11 pedestrians against Trivandrum's 29 over the same run. Cause:
+disciplined pedestrians only cross at a marked point, and with crossings only at
+3000/6000/9000 there were long stretches with none inside the simulated window — so
+Singapore simply had nowhere to cross and nobody appeared.
+
+That is a **density** difference between the profiles, which C3 explicitly forbids as a way
+of telling the cities apart. Crossings densified to every 1500px; counts are now 43 vs 36.
+
+The general lesson, third instance now: **an authored behavioural difference can leak into
+an unintended quantitative one.** Speed and vehicle count were guarded from the start;
+pedestrian count was not, and nothing would have caught it except counting.
+
+**Next:** T13 (clean restart), T14 (soak), T15 (debug overlay), then the T16 dry-run gate.

@@ -1,9 +1,9 @@
-STEP: 5 (night shift) — T0-T8 done. HALTED on stop condition 5 + one open ruling.
-NEXT_ARTIFACT: src/render/vehicles.ts (T9)
-LAST_ACTION: T7-T8 committed bd018e2. 47 tests pass, tsc clean.
-BLOCKED_ON: stop condition 5 only — four leaf tasks since last human contact.
+STEP: 5 (night shift) — T0-T12 done. HALTED on stop condition 5.
+NEXT_ARTIFACT: T13 clean restart
+LAST_ACTION: T9-T12 committed 2d5b601. 57 tests pass, tsc clean.
+BLOCKED_ON: stop condition 5 — four leaf tasks since last human contact.
             D9 RESOLVED 2026-08-03: straddles only, keep as built.
-TASKS_DONE: 9/17
+TASKS_DONE: 13/17
 CONSECUTIVE_FAILURES: 0
 
 RESOLVED THIS SESSION:
