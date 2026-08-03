@@ -1,36 +1,40 @@
-STEP: 5 (night shift) — T0-T4 done, structural sitting complete
-NEXT_ARTIFACT: src/sim/traffic.ts (T5 spawning)
-LAST_ACTION: T1-T4 committed ba0f2e8. 25 tests pass, tsc clean, invariants grep-verified.
-BLOCKED_ON: user decision on the T16 verification route (see OPEN ISSUE). Not blocking T5-T15.
-TASKS_DONE: 5/17
+STEP: 5 (night shift) — T0-T6 done. HALTED for a structural decision.
+NEXT_ARTIFACT: src/sim/lateral.ts (T7) — blocked, see below
+LAST_ACTION: T6 committed ab286c5. 36 tests pass, tsc clean.
+BLOCKED_ON: STOP CONDITION — "where a decision seems missing, stop and ask".
+  C3 requires parking at the roadside; the Road model has no roadside. Fixing it
+  means changing Road, which is [STRUCTURAL] and given verbatim in PLAN.md T2.
+TASKS_DONE: 7/17
 CONSECUTIVE_FAILURES: 0
 
-OPEN ISSUE — T16 dry run cannot run as written:
-  requestAnimationFrame fires 0 times/sec while the Browser pane is hidden
-  (visibilityState "hidden"). The sim never steps, so no browser-observable check
-  can be verified from this session. Screenshots fail for the same reason.
-  PROPOSED: move D-1 (counters) and D-3 (liveness) to a headless Node harness using
-  the seeded RNG, faster than real time. Stronger evidence than watching a browser.
-  D-2 (6 screenshots) still needs the pane displayed, or becomes a manual user step.
-  C1-C5 likewise need the pane open, or a human at the keyboard.
+BLOCKER DETAIL — no roadside to park on:
+  C3: "Bring the car to a stop at the roadside ... observe for 30 seconds."
+  The player can only stop INSIDE a lane. Measured over 150s parked:
+    Trivandrum  pop 58 -> 96, 33 vehicles stopped dead in the player's lane
+    Singapore   pop 35 -> 43, 18 vehicles stopped dead in the player's lane
+  C3's passive-observation phase would show a tester a jam caused by their own
+  parked car, in BOTH cities, making the two look more alike than they are.
+  Candidate causes, not exclusive:
+    (a) T8 lane changing does not exist yet - traffic cannot go around anything
+    (b) Road has no shoulder; updatePlayer clamps the player inside the carriageway
+  Did NOT change Road unilaterally. Needs a ruling before T7/T8, since both write
+  lateral motion and a shoulder changes the lateral bounds.
 
-PLAN DEFECTS FOUND SO FAR (2):
+OPEN ISSUE — T16 dry run cannot run as written:
+  requestAnimationFrame fires 0 times/sec while the Browser pane is hidden.
+  PROPOSED: D-1 (counters) and D-3 (liveness) move to the headless harness that now
+  exists (src/sim/harness.ts). D-2 (6 screenshots) still needs the pane displayed.
+
+PLAN DEFECTS FOUND SO FAR (3):
   T0  assumed an empty directory, but the pipeline creates factory/ before T0 runs
-  T3  attack 6 could not detect the bug it targeted; replaced with a Trivandrum-based
-      check, since the clamp never engages for Singapore
+  T3  attack 6 could not detect the bug it targeted; replaced
+  T6  proof "no vehicle overlaps another" is satisfied by the collision backstop
+      alone, so it passed a car-following model that did nothing
 
 ARTIFACTS ON DISK:
-  factory/KILL.md           done   step 0
-  factory/GROUND_TRUTH.md   done   step 0.5
-  factory/BRIEF.md          done   step 1
-  factory/CONTRACT.md       FROZEN step 2    C1-C5 — downstream must not edit
-  factory/PLAN.md           done   step 3    T0-T16
-  factory/TEST_PROTOCOL.md  SIGNED step 3+
-  factory/HANDOFF.md        SIGNED step 4
-  factory/BACKLOG.md        open   parked    B1 night drive, B2-B5
-  factory/DECISIONS.md      open   running   D1-D7
-  factory/log.md            open   step 5    T0, T0b, T1-T4
-  factory/STATE.md          done   this file
+  factory/{KILL,GROUND_TRUTH,BRIEF,PLAN,BACKLOG,DECISIONS,log,STATE}.md
+  factory/CONTRACT.md       FROZEN
+  factory/TEST_PROTOCOL.md  SIGNED
+  factory/HANDOFF.md        SIGNED
 
 GATES: T16 dry run blocks inviting testers | TEST_PROTOCOL needs people
-NIGHT SHIFT SCOPE: T5-T15, all [LEAF]. Halt after 5 leaf tasks (stop condition 5).

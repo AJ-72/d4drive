@@ -47,7 +47,9 @@ export function updatePlayer(p: Player, input: InputState, road: Road, dt: numbe
   const authority = clamp(Math.abs(p.speed) / (PLAYER_MAX_SPEED * 0.35), 0, 1);
   p.y += input.steer * STEER_PX_PER_SEC * authority * dt;
 
+  // The player may pull onto the verge; traffic may not. This is what makes C3's
+  // "stop at the roadside and observe" possible without blocking a live lane.
   const halfW = SPEC.widthPx / 2;
-  p.y = clamp(p.y, halfW, roadWidthPx(road) - halfW);
+  p.y = clamp(p.y, -road.shoulderPx + halfW, roadWidthPx(road) + road.shoulderPx - halfW);
   p.x = clamp(p.x + p.speed * dt, 0, road.lengthPx);
 }

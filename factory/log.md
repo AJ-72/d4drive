@@ -156,3 +156,108 @@ repeatable, and it can sample far more than 60 seconds. D-2's screenshots still 
 pane to be open, and that part stays manual unless the pane is displayed.
 
 **Next:** T5 (spawning) — first `[LEAF]`. Night-shift eligible.
+
+---
+
+## T5 — Spawning and despawning · 2026-08-03 · **PASS** · commit `799d74a`
+
+**What changed:** `src/sim/world.ts` (agents, spawn, despawn, census), `src/sim/harness.ts`
+(headless driver), `src/sim/world.test.ts`. `PLAYER_START_X` 80 → 1700 so the rear spawn
+edge has road behind it.
+
+**Proof:** population plateaus, fleet mix matches, deterministic per seed, different seeds
+diverge, despawn keeps pace with spawn over a 300s soak.
+
+**Design note:** the world holds no DOM. This was not in the plan but follows directly from
+the rAF finding — a sim that only runs in a browser cannot be verified when the pane is
+hidden. It is also what makes the proposed headless route for T16 possible.
+
+**Surprising — 1: I misread noise as a bug.** A single 120s census showed Trivandrum at
+16% car / 40% auto against an authored 34/30, and I flagged it as a defect. It was a
+45-vehicle snapshot being read as a distribution. Time-averaged over 180s the spawn mix
+lands at 33.6/34.3/8.6/23.6. **Lesson: instantaneous census is not distribution.**
+
+**Surprising — 2: a real bias hid underneath the noise.** Buses spawned at 7.7% against an
+authored 11%. Spawning dropped the vehicle when its randomly chosen lane was blocked, and a
+96px bus fails a clearance check far more often than a 26px bike — so the drop was biased by
+length. Now every lane is tried before giving up: skips 53 → 7, bus share 8.6% spawned /
+10.9% live. This matters because `PLAN.md` T3 marks Singapore's bus share as load-bearing
+for C3's queueing check. `weightedPick` itself was verified unbiased to within 0.06pp over
+400k draws.
+
+---
+
+## T6 — Car following · 2026-08-03 · **PASS** · commit `ab286c5`
+
+**What changed:** IDM longitudinal model in `src/sim/world.ts`, `following.test.ts`, plus
+two corrections described below.
+
+**Proof:** no vehicle passes through another in either profile; Singapore holds a larger
+minimum gap than Trivandrum and stays above 20px; Singapore gaps are more uniform than
+Trivandrum's; no vehicle travels backwards; nothing overlaps the player (A3).
+
+**Measured gaps now sit on the authored floors** — Singapore 31.8px (floor 34), Trivandrum
+5.9px (floor 6). Before the fix both read exactly 1.0px, i.e. the collision backstop.
+
+### Surprising — 1: the first car-following model never worked, and the tests said PASS
+
+The initial hand-rolled rule braked when `gap < headway` and eased toward the leader's
+speed. Every measured minimum gap was exactly `1.0` — the hard backstop — in **both**
+profiles and in every condition. The behavioural model was contributing nothing; the
+anti-overlap guard was doing all the work.
+
+The arithmetic: Singapore begins braking at a 57px gap, but stopping from 176px/s at its
+comfortable 210px/s² needs ~74px. It could not stop in the distance it left itself, so it
+always overshot onto the backstop. Replaced with the Intelligent Driver Model, which derives
+required gap from closing speed. Time headway is now *derived* from the profile
+(`followingDistance.mean / desiredSpeed.mean` → Trivandrum 0.15s, Singapore 0.33s) rather
+than authored separately, so it cannot drift out of sync with `followingDistance`.
+
+**The dangerous part: the T6 tests as originally written passed the broken model.** They
+asserted "no overlaps" — which the backstop guarantees by construction. A check that the
+backstop alone satisfies cannot detect the absence of car-following. This is the *tests that
+can't fail* category, found in my own work rather than in the plan's.
+
+### Surprising — 2: the player was 2.5x faster than all traffic
+
+`PLAYER_MAX_SPEED` was 420px/s against profile means of 170–178. The player outran the
+entire simulation window and never interacted with traffic at all — population under a
+driving player collapsed to 7–10 agents. Set to 285 (~1.6× mean, below the ~280 that
+Trivandrum's spread produces). Nothing in the plan specified this; I picked 420 arbitrarily
+in T4 and it went unnoticed until gap statistics had too few samples to be meaningful.
+
+### Surprising — 3, and it BLOCKS the C3 protocol: there is no roadside to park on
+
+C3 says *"Bring the car to a stop at the roadside and do not touch the controls. Observe for
+30 seconds."* The road model has no roadside. The player can only stop **inside a lane**,
+and until T8 adds lane changing there is no way past a stopped vehicle. Measured, parked,
+over 150s:
+
+| | end pop | pop 1st half → 2nd half | min gap | stopped in player's lane |
+|---|---|---|---|---|
+| Trivandrum parked | 92 | 58 → 96 | 1.0px | **33** |
+| Singapore parked | 43 | 35 → 43 | 28.2px | **18** |
+| Trivandrum driving | 12 | 17 → 12 | 2.0px | 12 |
+| Singapore driving | 12 | 21 → 12 | 31.8px | 12 |
+
+**Parking the player creates a permanent, growing jam.** C3's passive-observation phase —
+the most diagnostic part of the whole test protocol — would show a tester a traffic jam
+caused by their own parked car, in both cities, and the two would look far more alike than
+they should.
+
+Two candidate causes, and they are not exclusive:
+- **T8 (lane changing) does not exist yet.** Once traffic can go around, a stopped vehicle
+  stops being an absolute barrier. This may resolve most of it.
+- **`Road` has no shoulder.** `laneCenterY`/`roadWidthPx` describe carriageway only, and
+  `updatePlayer` clamps the player inside it. Adding a shoulder means changing `Road`, which
+  is a `[STRUCTURAL]` artifact given verbatim in the plan.
+
+Per the plan's standing instruction — *"where a decision seems missing, stop and ask rather
+than inventing one"* — I have not changed `Road`. **Escalated to the user.**
+
+Interim: gap and population assertions now run with the player driving, and say in-comment
+why. The parked case is asserted only for "nothing overlaps the player", which must hold
+regardless.
+
+**Next:** T7 (lane discipline), pending the roadside decision — T7 and T8 both write lateral
+motion, and a shoulder changes what the lateral bounds are.

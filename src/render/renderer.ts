@@ -33,7 +33,7 @@ export function render(ctx: CanvasRenderingContext2D, road: Road, player: Player
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
   ctx.fillStyle = COL.shoulder;
-  ctx.fillRect(0, roadTop - 26, VIEW_W, rw + 52);
+  ctx.fillRect(0, roadTop - road.shoulderPx, VIEW_W, rw + road.shoulderPx * 2);
 
   ctx.fillStyle = COL.asphalt;
   ctx.fillRect(0, roadTop, VIEW_W, rw);

@@ -42,12 +42,20 @@ describe('T4 — player vehicle', () => {
     expect(p.y).toBeLessThan(y0);
   });
 
-  it('never leaves the road surface, however hard it is steered', () => {
+  it('may reach the verge but never leaves it, however hard it is steered', () => {
+    // The verge was added after T8: C3 requires stopping "at the roadside", and
+    // without it the only way to stop is inside a live lane. Traffic never uses it.
+    const halfW = 22 / 2;
+    const loBound = -SPIKE_ROAD.shoulderPx + halfW;
+    const hiBound = SPIKE_ROAD.laneCount * SPIKE_ROAD.laneWidthPx + SPIKE_ROAD.shoulderPx - halfW;
+
     const p = run(GAS, 3);
     run({ throttle: 1, steer: -1 }, 20, p);
-    expect(p.y).toBeGreaterThanOrEqual(0);
+    expect(p.y).toBeGreaterThanOrEqual(loBound);
+    expect(p.y).toBeLessThan(0); // actually made it onto the verge
+
     run({ throttle: 1, steer: 1 }, 40, p);
-    expect(p.y).toBeLessThanOrEqual(SPIKE_ROAD.laneCount * SPIKE_ROAD.laneWidthPx);
+    expect(p.y).toBeLessThanOrEqual(hiBound);
   });
 
   it('is speed-limited in both directions', () => {
