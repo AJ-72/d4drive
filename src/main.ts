@@ -1,21 +1,58 @@
-// T0 — scaffold only. No game code.
-// The done-condition for T0 is that `npm run dev` serves a page that renders.
-// T1 replaces this with the fixed-timestep loop.
+import { startLoop } from './engine/loop';
+import { createKeyboardInput } from './input/input';
+import { SINGAPORE } from './profiles/singapore';
+import { TRIVANDRUM } from './profiles/trivandrum';
+import { validateProfile } from './profiles/validate';
+import { SPIKE_ROAD } from './road/road';
+import { render, VIEW_H, VIEW_W } from './render/renderer';
+import { createPlayer, updatePlayer, type Player } from './sim/player';
+
+// Validated at load, not lazily: a malformed profile must fail loudly at startup
+// rather than produce subtly wrong traffic that nobody notices.
+validateProfile(TRIVANDRUM);
+validateProfile(SINGAPORE);
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('#app not found');
 
 const canvas = document.createElement('canvas');
-canvas.width = 1280;
-canvas.height = 720;
+canvas.width = VIEW_W;
+canvas.height = VIEW_H;
 app.appendChild(canvas);
 
 const ctx = canvas.getContext('2d');
 if (!ctx) throw new Error('2d context unavailable');
 
-ctx.fillStyle = '#22262d';
-ctx.fillRect(0, 0, canvas.width, canvas.height);
-ctx.fillStyle = '#7d8794';
-ctx.font = '20px system-ui, sans-serif';
-ctx.textAlign = 'center';
-ctx.fillText('D4Drive — T0 scaffold', canvas.width / 2, canvas.height / 2);
+const road = SPIKE_ROAD;
+const input = createKeyboardInput(window);
+let player: Player = createPlayer(road);
+
+const stop = startLoop(
+  (dt) => {
+    updatePlayer(player, input.sample(), road, dt);
+  },
+  () => {
+    render(ctx, road, player);
+  },
+);
+
+// Inspection hook for automated verification. NOT rendered, so it does not violate
+// C3's "no numeric readout on screen" — the on-screen debug overlay is T15 and is
+// a separate thing that must default to off.
+interface D4Debug {
+  player: () => Player;
+  road: typeof road;
+  press: (code: string, down: boolean) => void;
+  teardown: () => void;
+}
+(window as unknown as { __d4: D4Debug }).__d4 = {
+  player: () => player,
+  road,
+  press: (code, down) =>
+    window.dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code })),
+  teardown: () => {
+    stop();
+    input.dispose();
+    player = createPlayer(road);
+  },
+};
