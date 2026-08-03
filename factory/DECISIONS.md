@@ -140,6 +140,76 @@ cannot be surprised. **The dry run can only ever produce a FAIL that matters.** 
 
 ---
 
+## D8 — `Road` gains a shoulder (verge) — `[STRUCTURAL]`
+**Date:** 2026-08-03 · **Task:** T7–T8 · **User-approved:** "do 2, then 1 if still bad"
+
+**Chosen:** `Road.shoulderPx = 26`. The player may drive onto it; traffic never does.
+
+**Why:** `CONTRACT.md` C3 says *"bring the car to a stop at the roadside"*, and no roadside
+existed — the player could only stop inside a live lane. Measured over 150s parked:
+
+| | population | jammed behind player |
+|---|---|---|
+| before T8, parked in lane | 58 → 96 | 33 |
+| after T8, parked in lane | 57 → 79 | 21 |
+| after verge, pulled over | 52 → 95 | **0** |
+
+**Rejected:** *T8 alone* — tested first, on the user's instruction, precisely because it was
+the cheaper experiment. It reduced the jam by roughly a third but did not remove it: on a
+two-lane road at ~130 vehicles/min, a stopped vehicle still congests everything behind it.
+That is realistic, and unusable for C3 — every tester's passive-observation phase would have
+shown a jam caused by their own parked car, in *both* cities, making the two look far more
+alike than they are.
+
+**Cost:** edits a `[STRUCTURAL]` artifact given verbatim in `PLAN.md` T2. Contained: `Road`
+gained one field, `updatePlayer` widened its clamp, and `playerLane()` returns `null` when
+the player is clear of the carriageway. Nothing in `src/profiles/` was touched, so the
+profile/geometry invariant still holds.
+
+**Note:** the experiment was worth running even though it did not resolve the problem. It
+established that the jam is not merely an artefact of missing lane changes, which is what
+justified touching the structural artefact at all.
+
+---
+
+## D9 — "Zero centreline crossings" means zero *straddles*, not zero lane changes
+**Date:** 2026-08-03 · **Task:** T7 · **RESOLVED 2026-08-03 — user ruled: keep as built**
+
+C3 requires **zero** centreline crossings from Singapore. But Singapore has
+`overtakeUrgency: 0.10`, and on a two-lane road *any* overtake crosses the one centreline
+there is. Read literally, C3 forbids Singapore from ever changing lane — which would also
+make C3's own "queueing behind a slower vehicle" bullet the only possible behaviour.
+
+**Implemented reading:** the counter measures *deliberate straddling* — riding the line,
+`centerlineCrossPerMin`, which is `0.0` for Singapore — and not clean, completed lane
+changes. This matches C3's Trivandrum bullet, which pairs "crossing the lane centreline"
+with "or straddling lanes" as one undisciplined-lane-keeping signal.
+
+Measured over 90s: Singapore **0** straddles and 0–4 lane changes; Trivandrum ~200 straddles
+and ~200 lane changes.
+
+**Flagged rather than silently decided**, because it interprets a frozen check.
+
+**User ruling (2026-08-03): straddles only — keep as built.** Singapore never rides the line,
+but may still change lane to overtake roughly 0–4 times per 90s.
+
+**Rejected: the literal reading** (`overtakeUrgency` → 0). It satisfies C3 on the strictest
+reading with no interpretation needed, but it makes C3's other Singapore bullet — *"vehicles
+queueing behind a slower vehicle rather than forcing past it"* — trivially true: they would
+queue because passing is impossible, not because they are disciplined. A check that cannot
+fail is the exact category the Step 6 review hunts for, and this one would have been
+introduced deliberately.
+
+**Rejected: unfreezing C3 to reword it.** More honest about intent, but it breaks the freeze
+rule, which exists precisely so the builder cannot edit its own exam.
+
+**Residual risk, accepted:** a tester's 30-second Singapore window could contain one of those
+0–4 lane changes. Judged not to undermine "disciplined" — a single decisive move reads as
+competent, where sitting on the line reads as sloppy. If T16's dry run shows Singapore lane
+changes clustering, dropping `overtakeUrgency` to ~0.03 is the cheap mitigation.
+
+---
+
 ## Open — not yet decided, must not be improvised
 
 - ~~**The traffic-profile data shape.**~~ **RESOLVED 2026-08-02 in `PLAN.md` T3** — literal

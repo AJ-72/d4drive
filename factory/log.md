@@ -261,3 +261,93 @@ regardless.
 
 **Next:** T7 (lane discipline), pending the roadside decision — T7 and T8 both write lateral
 motion, and a shoulder changes what the lateral bounds are.
+
+---
+
+## T7–T8 — Lane discipline, overtaking, and the verge · 2026-08-03 · **PASS** · commit `bd018e2`
+
+**47 tests pass, `tsc --noEmit` clean.**
+
+### The experiment the user ordered: "do T8 first, add a shoulder only if still bad"
+
+Worth having run — it was the cheaper test and it changed what we knew. Measured over 150s:
+
+| scenario | population | jammed behind player | worst 2D overlap |
+|---|---|---|---|
+| before T8, parked in lane | 58 → 96 | 33 | — |
+| after T8, parked in lane | 57 → 79 | 21 | 11.4px |
+| after verge, pulled over | 52 → 95 | **0** | 3.8px |
+
+**T8 alone was not enough.** Lane changing cut the jam by about a third but could not remove
+it: on a two-lane road at ~130 vehicles/min a stopped vehicle congests everything behind it.
+Realistic, and unusable for C3. So the verge was added — `Road.shoulderPx = 26`, player only.
+Logged as `DECISIONS.md` D8. The experiment still earned its place: it established the jam
+was not merely an artefact of missing lane changes, which is what justified touching a
+`[STRUCTURAL]` artefact at all.
+
+### Surprising — 1: cut-ins were arithmetically impossible, and a profile field was dead
+
+Gap acceptance required the rear gap to clear `minAcceptedGapFactor × length` = 39px for a
+car, while a cut-in was counted only when the rear gap was **under** 26px. Mutually
+exclusive — cut-ins could never fire for cars, and the counter read 1 across a whole run.
+`cutInAggression` was meanwhile **not referenced anywhere in the code at all**.
+
+Both fixed together: a driver diving into a gap cares about the space *ahead*; the space
+behind is the other driver's problem. `cutInAggression` is now the probability of accepting
+only the hard minimum at the rear — Trivandrum 0.70, Singapore 0.02. Cut-ins went 1 → 67.
+
+**A dead profile field is the quiet version of this failure.** The schema is the product;
+a field nothing reads is a cultural difference that does not exist, and nothing fails.
+
+### Surprising — 2: three separate ways vehicles drove through each other
+
+True 2D overlap, worst case in Trivandrum, was 27.8px on 22px-wide cars — vehicles merging
+into one another rather than jostling. Three independent causes, each needing its own fix:
+
+1. **Straddlers were intangible.** A vehicle sitting on the boundary did not *occupy* the
+   lane it was half in, so nothing saw it. → `occupies()` now includes the straddled lane.
+2. **Straddling started with someone alongside.** → clearance check before drifting onto
+   the line.
+3. **The longitudinal backstop cannot see sideways motion.** It clamps forward movement
+   only, so a lane-changer or straddler slid laterally into a vehicle level with it.
+   → an explicit lateral guard.
+
+Result: 27.8 → 3.8px in Trivandrum, and **exactly 0** in Singapore. Nonzero in Trivandrum is
+acceptable and arguably wanted — the jostle is the point — but 3.8px is a graze, not a merge.
+
+**Note the earlier false alarm:** an intermediate reading of −10.8px was a *measurement*
+artefact, not a collision. The probe grouped vehicles by `a.lane`, which is stale mid-change:
+a vehicle that has physically moved to the next lane is still filed under its old one. The
+real check compares actual bodies in 2D.
+
+### Surprising — 3: a frozen contract check is ambiguous
+
+C3 requires **zero** centreline crossings from Singapore, but Singapore has
+`overtakeUrgency: 0.10`, and on a two-lane road every overtake crosses the only centreline
+there is. Read literally, C3 forbids Singapore from ever changing lane.
+
+Implemented reading: the counter measures deliberate *straddling* (riding the line), not
+clean lane changes — which matches C3's Trivandrum bullet pairing "crossing the lane
+centreline **or straddling lanes**" as one signal. Measured: Singapore 0 straddles, 0–4 lane
+changes; Trivandrum ~200 of each.
+
+**Escalated as `DECISIONS.md` D9 rather than decided silently**, because it interprets a
+frozen check. If the user disagrees, the fix is one number: Singapore `overtakeUrgency` → 0.
+
+### C3 counter readings now available (D-1 preview)
+
+Per 90–120s, player driving:
+
+| signal | Trivandrum | Singapore |
+|---|---|---|
+| centreline straddles | ~200 | **0** |
+| sub-length gap accepts | ~96 | **0** |
+| cut-ins | ~67 | 0–1 |
+| lane changes | ~200 | 0–4 |
+
+Every C3 Trivandrum bullet implemented so far fires repeatedly; every Singapore "exactly
+zero" requirement reads exactly zero.
+
+**Next:** T9 (vehicle kinds rendering), T10 (pedestrians), T11 (hot-swap), T12 (arrived),
+T13 (restart), T14 (soak), T15 (overlay). Stop condition 5 (five leaf tasks since last human
+contact) is now due: T5, T6, T7, T8 done — halting at four with a decision outstanding.

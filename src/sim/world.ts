@@ -26,8 +26,8 @@ export interface Agent {
   x: number;
   y: number;
   speed: number;
-  /** Rolled once at spawn and never changed. */
-  readonly desiredSpeed: number;
+  /** Rolled at spawn. Re-rolled only when the active profile is swapped (T11). */
+  desiredSpeed: number;
   /** Lane currently occupied. Equals targetLane except mid-change. */
   lane: number;
   /** Lane being moved into. T8 sets this; lane follows once the move completes. */
@@ -44,6 +44,29 @@ export interface Agent {
   nextOvertakeCheckAt: number;
   /** A non-yielding driver ignores a cut-in until this time, then brakes hard (T8). */
   ignoreLeaderUntil: number;
+  /** World time until which this vehicle is stopped IN the roadway (C3 bullet 4). */
+  roadsideStopUntil: number;
+  nextRoadsideCheckAt: number;
+}
+
+export interface Pedestrian {
+  readonly id: number;
+  x: number;
+  y: number;
+  /** Side being walked toward. Outside the carriageway on both ends. */
+  targetY: number;
+  /** True when crossing away from a marked crossing (C3 bullet 5). */
+  readonly jaywalking: boolean;
+  /** World time until which they have frozen mid-road. */
+  hesitateUntil: number;
+  nextHesitateCheckAt: number;
+}
+
+/** Anything a driver must not drive into. Vehicles, the player, and pedestrians. */
+interface Obstacle {
+  x: number;
+  speed: number;
+  halfLength: number;
 }
 
 export interface Counters {
@@ -57,12 +80,18 @@ export interface Counters {
   subLengthGapAccepts: number;
   /** C3 Trivandrum bullet 3: pulled in close enough to force the follower to brake. */
   cutIns: number;
+  /** C3 Trivandrum bullet 4: stopped in the roadway while others flow around. */
+  roadsideStops: number;
+  /** C3 Trivandrum bullet 5: crossed away from a marked crossing. */
+  jaywalks: number;
+  pedestriansSpawned: number;
 }
 
 export interface World {
   readonly road: Road;
   profile: TrafficProfile;
   agents: Agent[];
+  pedestrians: Pedestrian[];
   player: Player;
   /** Seconds of simulated time. */
   time: number;
@@ -70,6 +99,9 @@ export interface World {
   counters: Counters;
   nextId: number;
   spawnAccumulator: number;
+  pedAccumulator: number;
+  /** T12: the player reached the end of the road. */
+  arrived: boolean;
 }
 
 export function createWorld(road: Road, profile: TrafficProfile, seed?: number): World {
@@ -77,6 +109,7 @@ export function createWorld(road: Road, profile: TrafficProfile, seed?: number):
     road,
     profile,
     agents: [],
+    pedestrians: [],
     player: createPlayer(road),
     time: 0,
     rng: createRng(seed),
@@ -88,9 +121,14 @@ export function createWorld(road: Road, profile: TrafficProfile, seed?: number):
       laneChanges: 0,
       subLengthGapAccepts: 0,
       cutIns: 0,
+      roadsideStops: 0,
+      jaywalks: 0,
+      pedestriansSpawned: 0,
     },
     nextId: 1,
     spawnAccumulator: 0,
+    pedAccumulator: 0,
+    arrived: false,
   };
 }
 
@@ -165,6 +203,8 @@ function spawnOne(w: World): void {
     straddleLane: lane,
     nextOvertakeCheckAt: w.time + rng() * OVERTAKE_CHECK_SEC,
     ignoreLeaderUntil: -1,
+    roadsideStopUntil: -1,
+    nextRoadsideCheckAt: w.time + 1,
   });
   w.counters.spawned++;
 }
@@ -183,6 +223,132 @@ function despawn(w: World): void {
   w.agents = kept;
 }
 
+export const PED_RADIUS_PX = 7;
+const PED_HESITATE_SEC = 1.1;
+/** Lateral margin at which a driver starts reacting to someone near the kerb. */
+const PED_LOOKOUT_PX = 14;
+/** A pedestrian will not step off the kerb into a vehicle this close. */
+const PED_KERB_LOOKAHEAD_PX = 150;
+
+function spawnPedestrian(w: World): void {
+  const { profile: p, rng } = w;
+  const jaywalking = rng() < p.jaywalkProbability;
+
+  let x: number;
+  if (jaywalking) {
+    x = w.player.x + (rng() * 2 - 1) * SIM_MARGIN_PX;
+  } else {
+    // Only crossings inside the simulated window are usable.
+    const usable = w.road.crossingsPx.filter(
+      (c) => Math.abs(c - w.player.x) <= SIM_MARGIN_PX,
+    );
+    const pick = usable[Math.floor(rng() * usable.length)];
+    if (pick === undefined) return; // no marked crossing nearby; nobody crosses
+    x = pick;
+  }
+  if (x < 0 || x > w.road.lengthPx) return;
+
+  const fromTop = rng() < 0.5;
+  const rw = roadWidthPx(w.road);
+  w.pedestrians.push({
+    id: w.nextId++,
+    x,
+    y: fromTop ? -w.road.shoulderPx : rw + w.road.shoulderPx,
+    targetY: fromTop ? rw + w.road.shoulderPx : -w.road.shoulderPx,
+    jaywalking,
+    hesitateUntil: -1,
+    nextHesitateCheckAt: w.time + 0.5,
+  });
+  w.counters.pedestriansSpawned++;
+  if (jaywalking) w.counters.jaywalks++;
+}
+
+/** True once the pedestrian has finished crossing and is off the far side. */
+function nearSideDone(w: World, ped: Pedestrian): boolean {
+  const rw = roadWidthPx(w.road);
+  return ped.targetY > rw ? ped.y >= rw : ped.y <= 0;
+}
+
+/** Is a vehicle bearing down on this pedestrian's crossing point? */
+function vehicleImminent(w: World, ped: Pedestrian): boolean {
+  for (const a of w.agents) {
+    if (a.x > ped.x) continue;
+    if (ped.x - a.x > PED_KERB_LOOKAHEAD_PX) continue;
+    if (a.speed < 12) continue; // stopped or crawling: safe to step out
+    return true;
+  }
+  return false;
+}
+
+function updatePedestrians(w: World, dt: number): void {
+  const p = w.profile;
+  const rw = roadWidthPx(w.road);
+  const kept: Pedestrian[] = [];
+
+  for (const ped of w.pedestrians) {
+    const onRoad = ped.y > 0 && ped.y < rw;
+
+    // Freezing mid-road while traffic flows around is a Trivandrum signature
+    // (pedestrianHesitation 0.35 vs Singapore 0.05).
+    if (onRoad && w.time >= ped.nextHesitateCheckAt) {
+      ped.nextHesitateCheckAt = w.time + 1;
+      if (w.rng() < p.pedestrianHesitation) {
+        ped.hesitateUntil = w.time + PED_HESITATE_SEC;
+      }
+    }
+
+    // Stepping off the kerb in front of a moving vehicle. Even in Trivandrum people
+    // look before stepping out — without this, pedestrians walk into the side of
+    // cars already alongside them and no amount of driver braking can help.
+    const aboutToStepOn = !onRoad && !nearSideDone(w, ped);
+    const blocked = aboutToStepOn && vehicleImminent(w, ped);
+
+    if (w.time >= ped.hesitateUntil && !blocked) {
+      const dir = Math.sign(ped.targetY - ped.y);
+      ped.y += dir * p.pedestrianSpeedPx * dt;
+    }
+
+    const arrived = Math.abs(ped.y - ped.targetY) < 4;
+    const inWindow = Math.abs(ped.x - w.player.x) < SIM_MARGIN_PX + DESPAWN_SLACK_PX;
+    if (!arrived && inWindow) kept.push(ped);
+  }
+  w.pedestrians = kept;
+}
+
+/** Roadside stops: a vehicle halts IN the roadway. Singapore's rate is 0. */
+function updateRoadsideStops(w: World): void {
+  const p = w.profile;
+  if (p.roadsideStopPerMin <= 0) return;
+  for (const a of w.agents) {
+    if (w.time < a.nextRoadsideCheckAt || w.time < a.roadsideStopUntil) continue;
+    a.nextRoadsideCheckAt = w.time + 1;
+    if (w.rng() < p.roadsideStopPerMin / 60) {
+      a.roadsideStopUntil = w.time + p.roadsideStopDurationSec;
+      w.counters.roadsideStops++;
+    }
+  }
+}
+
+/**
+ * T11: swap the active profile in place. Existing vehicles RE-READ it — they are not
+ * destroyed and respawned. C2 requires visible change in traffic that is already on
+ * screen; respawning would reset the whole scene and pass the check meaninglessly.
+ */
+export function setProfile(w: World, profile: TrafficProfile): void {
+  w.profile = profile;
+  for (const a of w.agents) {
+    // Re-roll against the new profile, preserving nothing but identity and position.
+    a.desiredSpeed = rollDesiredSpeed(profile, a.kind, w.rng);
+    a.nextStraddleAt = w.time + nextStraddleDelay(profile, w.rng);
+    if (profile.centerlineCrossPerMin <= 0) {
+      a.straddleUntil = -1; // stop riding the line immediately
+    }
+    if (profile.roadsideStopPerMin <= 0) {
+      a.roadsideStopUntil = -1; // and start moving again
+    }
+  }
+}
+
 export function stepWorld(w: World, input: InputState, dt: number): void {
   w.time += dt;
   updatePlayer(w.player, input, w.road, dt);
@@ -193,10 +359,21 @@ export function stepWorld(w: World, input: InputState, dt: number): void {
     spawnOne(w);
   }
 
+  w.pedAccumulator += (w.profile.pedestrianRatePerMin / 60) * dt;
+  while (w.pedAccumulator >= 1) {
+    w.pedAccumulator -= 1;
+    spawnPedestrian(w);
+  }
+
+  updateRoadsideStops(w);
   updateLateral(w, dt);
+  updatePedestrians(w, dt);
   followAndMove(w, dt);
 
   despawn(w);
+
+  // T12: arriving is sticky — reaching the end once ends the run.
+  if (w.player.x >= w.road.lengthPx - 1) w.arrived = true;
 }
 
 const OVERTAKE_CHECK_SEC = 0.3;
@@ -396,19 +573,32 @@ export function playerLane(w: World): number | null {
 }
 
 /** The vehicle a given agent is following, or null if the lane ahead is clear. */
-export function leaderOf(w: World, a: Agent): { x: number; speed: number; kind: VehicleKind } | null {
-  let best: { x: number; speed: number; kind: VehicleKind } | null = null;
+export function leaderOf(w: World, a: Agent): Obstacle | null {
+  let best: Obstacle | null = null;
   for (const b of w.agents) {
     // A vehicle mid-change occupies both lanes, so it must be seen from both.
     if (b === a || b.x <= a.x) continue;
     if (!(occupies(w, b, a.lane) || occupies(w, b, a.targetLane))) continue;
-    if (!best || b.x < best.x) best = { x: b.x, speed: b.speed, kind: b.kind };
+    if (!best || b.x < best.x) best = { x: b.x, speed: b.speed, halfLength: VEHICLE_SPECS[b.kind].lengthPx / 2 };
   }
   // The player occupies a lane too. Without this, traffic drives straight through
   // the player and HANDOFF A3 ("AI reacts to the player") is silently unmet.
   const pLane = playerLane(w);
   if (pLane !== null && occupies(w, a, pLane) && w.player.x > a.x && (!best || w.player.x < best.x)) {
-    best = { x: w.player.x, speed: w.player.speed, kind: 'car' };
+    best = { x: w.player.x, speed: w.player.speed, halfLength: VEHICLE_SPECS.car.lengthPx / 2 };
+  }
+
+  // Pedestrians standing on the carriageway. Without this they are pure decoration
+  // and get driven through — and a jaywalker nobody brakes for is not a jaywalker,
+  // which would leave C3's bullet 5 technically present but meaningless.
+  // The band is wider than the vehicle body on purpose. Reacting only once a
+  // pedestrian already overlaps leaves no distance to brake in, and they get run
+  // over — measured at 30px of penetration. Drivers watch the kerb, not the bumper.
+  const halfW = VEHICLE_SPECS[a.kind].widthPx / 2 + PED_LOOKOUT_PX;
+  for (const ped of w.pedestrians) {
+    if (ped.x <= a.x) continue;
+    if (Math.abs(ped.y - a.y) > halfW + PED_RADIUS_PX) continue;
+    if (!best || ped.x < best.x) best = { x: ped.x, speed: 0, halfLength: PED_RADIUS_PX };
   }
   return best;
 }
@@ -444,7 +634,7 @@ function followAndMove(w: World, dt: number): void {
     // A driver who refused to yield to a cut-in has not reacted yet.
     const lead = w.time < a.ignoreLeaderUntil ? null : leaderOf(w, a);
     if (lead) {
-      const gap = lead.x - a.x - (spec.lengthPx + VEHICLE_SPECS[lead.kind].lengthPx) / 2;
+      const gap = lead.x - a.x - spec.lengthPx / 2 - lead.halfLength;
       const dv = v - lead.speed; // positive = closing
       const sStar =
         p.minFollowingDistancePx + Math.max(0, v * T + (v * dv) / (2 * Math.sqrt(aMax * b)));
@@ -462,7 +652,7 @@ function followAndMove(w: World, dt: number): void {
     let step = a.speed * dt;
     if (next) {
       const clearance =
-        next.x - a.x - (spec.lengthPx + VEHICLE_SPECS[next.kind].lengthPx) / 2 - 1;
+        next.x - a.x - spec.lengthPx / 2 - next.halfLength - 1;
       if (step > clearance) {
         step = Math.max(0, clearance);
         a.speed = Math.min(a.speed, Math.max(0, next.speed));

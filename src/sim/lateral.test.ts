@@ -135,8 +135,12 @@ describe('C3 protocol — the roadside must actually work', () => {
   it('and therefore causes no jam — C3 observes traffic, not its own blockage', () => {
     for (const profile of [TRIVANDRUM, SINGAPORE]) {
       const w = pullOver(profile);
-      const stopped = w.agents.filter((a) => a.speed < 5).length;
-      expect(stopped).toBe(0);
+      // Deliberate roadside stops (T10, C3 bullet 4) are a FEATURE and must not be
+      // counted as a jam. Only involuntary stops indicate a blockage.
+      const jammed = w.agents.filter(
+        (a) => a.speed < 5 && w.time >= a.roadsideStopUntil,
+      ).length;
+      expect(jammed).toBe(0);
     }
   });
 

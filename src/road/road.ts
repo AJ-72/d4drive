@@ -27,7 +27,12 @@ export const SPIKE_ROAD: Road = {
   lengthPx: 12000,
   laneCount: 2,
   laneWidthPx: 90,
-  crossingsPx: [3000, 6000, 9000],
+  // Every 1500px. Three crossings (3000/6000/9000) left long stretches with none in
+  // the simulated window, and since disciplined pedestrians only cross at a marked
+  // point, Singapore simply produced no pedestrians there — 11 against Trivandrum's
+  // 29 over the same run. That is a DENSITY difference between the profiles, which
+  // C3 explicitly forbids as a way of telling the two cities apart.
+  crossingsPx: [1500, 3000, 4500, 6000, 7500, 9000, 10500],
   shoulderPx: 26,
 };
 
