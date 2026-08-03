@@ -14,6 +14,9 @@ describe('T5 — spawning and despawning', () => {
     runHeadless({
       seconds: 120,
       profile: TRIVANDRUM,
+      // Driving, not parked. A parked player blocks a lane permanently until T8 adds
+      // lane changing, so a parked run measures jam growth rather than spawn balance.
+      input: { throttle: 1, steer: 0 },
       onStep: (w) => counts.push(w.agents.length),
     });
 

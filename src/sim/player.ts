@@ -12,7 +12,11 @@ export interface Player {
 
 const SPEC = VEHICLE_SPECS.car;
 
-export const PLAYER_MAX_SPEED = 420; // px/sec
+// Roughly 1.6x the profiles' mean desired speed (170-178), and below the fastest
+// vehicles the Trivandrum spread produces (~280). Was 420, which is 2.5x mean traffic:
+// the player outran the entire simulation window and never interacted with anyone,
+// which is the opposite of "survive the commute".
+export const PLAYER_MAX_SPEED = 285; // px/sec
 const ACCEL = 300; // px/sec^2
 const BRAKE = 520; // px/sec^2
 const DRAG = 70; // px/sec^2, applied when coasting
