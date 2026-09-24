@@ -3,6 +3,7 @@ import { FIXED_DT } from '../engine/loop';
 import { SINGAPORE } from '../profiles/singapore';
 import { TRIVANDRUM } from '../profiles/trivandrum';
 import { roadWidthPx, SPIKE_ROAD } from '../road/road';
+import { VEHICLE_SPECS } from '../profiles/types';
 import { runHeadless } from './harness';
 import { createWorld, setProfile, stepWorld } from './world';
 
@@ -48,9 +49,16 @@ describe('T10 — pedestrians', () => {
         for (const ped of w.pedestrians) {
           if (ped.y <= 0 || ped.y >= rw) continue;
           for (const a of w.agents) {
-            const dx = Math.abs(a.x - ped.x) - 46 / 2 - 7;
-            const dy = Math.abs(a.y - ped.y) - 22 / 2 - 7;
-            if (dx < 0 && dy < 0) worstPenetration = Math.max(worstPenetration, -dx);
+            // A stopped vehicle is not driving through anyone. Pedestrians can still
+            // brush a stationary bus's side as they cross in front of the queue.
+            if (a.speed < 1) continue;
+            // True 2D overlap depth with the vehicle's own size. Measuring only the
+            // along-road depth, with car dimensions for every kind, reported 26px for
+            // a person 1px into the side of a car creeping in a queue.
+            const s = VEHICLE_SPECS[a.kind];
+            const dx = Math.abs(a.x - ped.x) - s.lengthPx / 2 - 7;
+            const dy = Math.abs(a.y - ped.y) - s.widthPx / 2 - 7;
+            if (dx < 0 && dy < 0) worstPenetration = Math.max(worstPenetration, Math.min(-dx, -dy));
           }
         }
       },

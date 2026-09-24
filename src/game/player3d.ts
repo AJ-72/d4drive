@@ -50,6 +50,8 @@ export class PlayerCar {
   private readonly headlight: THREE.SpotLight;
   private readonly scarf: Scarf;
   private readonly helmetGroup = new THREE.Group();
+  /** Seconds left of a headlight flash. */
+  private flashT = 0;
 
   constructor(scene: THREE.Scene) {
     this.group.add(this.body);
@@ -188,6 +190,11 @@ export class PlayerCar {
     this.scarf.mesh.visible = on;
   }
 
+  /** Flash the headlights at oncoming traffic: two quick pulses. */
+  flashLights(): void {
+    this.flashT = 0.5;
+  }
+
   update(pose: PlayerPose, dt: number): void {
     this.group.position.set(pose.x, pose.lift, pose.z);
     this.group.rotation.set(0, pose.yaw, 0);
@@ -205,7 +212,9 @@ export class PlayerCar {
     this.head.rotation.z = pose.squawk * 0.5 + Math.sin(pose.time * 7) * 0.03 * Math.min(1, pose.speed / 10);
     this.head.rotation.y = Math.sin(pose.time * 0.7) * 0.12;
 
-    this.headlight.intensity = pose.night * 260;
+    this.flashT = Math.max(0, this.flashT - dt);
+    const pulse = this.flashT > 0 && Math.sin((this.flashT / 0.5) * Math.PI * 4) > 0;
+    this.headlight.intensity = pose.night * 260 + (pulse ? 900 : 0);
 
     this.group.updateMatrixWorld(true);
     const anchor = this.neckAnchor.getWorldPosition(new THREE.Vector3());

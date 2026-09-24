@@ -12,11 +12,10 @@ export interface Player {
 
 const SPEC = VEHICLE_SPECS.car;
 
-// Roughly 1.6x the profiles' mean desired speed (170-178), and below the fastest
-// vehicles the Trivandrum spread produces (~280). Was 420, which is 2.5x mean traffic:
-// the player outran the entire simulation window and never interacted with anyone,
-// which is the opposite of "survive the commute".
-export const PLAYER_MAX_SPEED = 285; // px/sec
+// 150 km/h. Was 285 (~103 km/h), which the player found too slow once the road opened
+// up. It stays below the 420 that outran the simulation window entirely: at full speed
+// the player still closes on traffic ahead, and must pick gaps to get past it.
+export const PLAYER_MAX_SPEED = 417; // px/sec
 const ACCEL = 300; // px/sec^2
 const BRAKE = 520; // px/sec^2
 const DRAG = 70; // px/sec^2, applied when coasting
@@ -25,7 +24,7 @@ const STEER_PX_PER_SEC = 240; // lateral speed at full steer
 // Far enough along the road that the traffic spawn window (SIM_MARGIN_PX) has road
 // behind the player to spawn into. Starting at x=0 would put the rear spawn edge at
 // negative x, and no traffic would ever approach from behind.
-export const PLAYER_START_X = 1700;
+export const PLAYER_START_X = 2600;
 
 export function createPlayer(road: Road): Player {
   return { x: PLAYER_START_X, y: laneCenterY(road, road.laneCount - 1), speed: 0 };
@@ -52,4 +51,7 @@ export function updatePlayer(p: Player, input: InputState, road: Road, dt: numbe
   const halfW = SPEC.widthPx / 2;
   p.y = clamp(p.y, -road.shoulderPx + halfW, roadWidthPx(road) + road.shoulderPx - halfW);
   p.x = clamp(p.x + p.speed * dt, 0, road.lengthPx);
+  // At either end of the road the car has stopped, whatever the pedal says. A player
+  // pinned at the end but still "doing 150 km/h" read to traffic as pulling away.
+  if (p.x === 0 || p.x === road.lengthPx) p.speed = 0;
 }

@@ -40,7 +40,7 @@ describe('C3 guard — realised densities, not just authored rates', () => {
     ).toBeLessThan(MAX_RATIO);
   });
 
-  it('vehicle populations stay comparable', () => {
+  it('vehicle populations: Trivandrum quieter, never empty', () => {
     const sample = (profile: typeof TRIVANDRUM) => {
       const counts: number[] = [];
       runHeadless({
@@ -54,7 +54,12 @@ describe('C3 guard — realised densities, not just authored rates', () => {
       });
       return counts.reduce((a, b) => a + b, 0) / counts.length;
     };
-    expect(ratio(sample(TRIVANDRUM), sample(SINGAPORE))).toBeLessThan(MAX_RATIO);
+    // Was "within MAX_RATIO". The player asked (2026-09-24) for fewer vehicles in
+    // Trivandrum. Keep it the quieter road, but still a busy one.
+    const tvm = sample(TRIVANDRUM);
+    const sg = sample(SINGAPORE);
+    expect(tvm).toBeLessThan(sg);
+    expect(ratio(tvm, sg)).toBeLessThan(2.5);
   });
 
   it('mean vehicle speeds stay comparable — the difference must be behavioural', () => {

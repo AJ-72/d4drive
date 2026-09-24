@@ -10,7 +10,8 @@ import { SINGAPORE } from '../profiles/singapore';
 import { TRIVANDRUM } from '../profiles/trivandrum';
 import { validateProfile } from '../profiles/validate';
 import { COAST_ROAD, laneCenterY } from '../road/road';
-import { createWorld, setProfile, stepWorld, type World } from '../sim/world';
+import { PLAYER_MAX_SPEED, PLAYER_START_X } from '../sim/player';
+import { createWorld, flashHeadlights, setProfile, stepWorld, type World } from '../sim/world';
 import { ACHIEVEMENTS, emptyStats, type Stats } from './achievements';
 import { GameAudio } from './audio';
 import { autopilot, gearbox, resolvePlayerContacts } from './drive';
@@ -21,7 +22,7 @@ import { PlayerCar } from './player3d';
 import { buildScenery } from './scenery';
 import { Sea } from './sea';
 import { Traffic3D } from './traffic3d';
-import { clamp01, kmh, lerp, m, PX_PER_M, sceneZ } from './units';
+import { clamp01, kmh, lerp, m, PX_PER_M, sceneZ, smoothstep } from './units';
 
 validateProfile(TRIVANDRUM);
 validateProfile(SINGAPORE);
@@ -128,6 +129,12 @@ let cineAt = 0;
 let simTime = 0;
 /** Set when the car teleports (restart), so the camera cuts instead of sweeping 6 km. */
 let snapCamera = false;
+/** Player position before the latest sim step, for interpolating frames between steps. */
+let prevPX = world.player.x;
+let prevPY = world.player.y;
+let flashCooldown = 0;
+/** One high-beam tip per run. */
+let glareTipShown = false;
 
 function freshWorld(): World {
   const w = createWorld(ROAD, PROFILES[profileIndex]!);
@@ -152,7 +159,13 @@ const hud = new Hud(
       restartRun();
       hud.showGame();
       setCamera(requestedCam);
-      hud.toast('🐦', "Let's go!", 'W/S throttle · A/D change lane · Space jump · F stunt');
+      hud.toast(
+        '🐦',
+        "Let's go!",
+        PROFILES[profileIndex]!.twoWay
+          ? 'Keep left · W/S throttle · A/D overtake · L flash lights'
+          : 'W/S throttle · A/D change lane · Space jump · F stunt',
+      );
     },
     camera: (mode) => setCamera(mode),
     setHour(h) {
@@ -202,6 +215,9 @@ function restartRun(): void {
   lift = vy = 0;
   rollT = -1;
   lastPlayerY = world.player.y;
+  prevPX = world.player.x;
+  prevPY = world.player.y;
+  glareTipShown = false;
   snapCamera = true;
   hud.hideFinish();
   hud.setCity(PROFILES[profileIndex]!.displayName);
@@ -256,6 +272,7 @@ const keyboard = createKeyboardInput(window);
 const touch = { gas: false, brake: false, left: false, right: false, cruise: false };
 // Tap actions fire once on press; held controls stay down until the finger lifts.
 const TAP: Record<string, () => void> = {
+  flash: () => flashLights(),
   jump: () => void jump(),
   stunt: () => stunt(),
   horn: () => honk(),
@@ -288,6 +305,17 @@ function honk(): void {
   if (!started) return;
   audio.horn();
   stats.horns++;
+}
+
+/** Flash the headlights: oncoming drivers with high beams may dip them. */
+function flashLights(): void {
+  if (!started || paused || finished || flashCooldown > 0) return;
+  flashCooldown = 0.6;
+  car.flashLights();
+  const r = flashHeadlights(world);
+  if (r.dipped + r.ignored === 0) hud.toast('💡', 'Flashed your lights');
+  else if (r.ignored === 0) hud.toast('💡', r.dipped === 1 ? 'They dipped their lights' : `${r.dipped} drivers dipped their lights`);
+  else hud.toast('💡', `${r.dipped} dipped · ${r.ignored} ignored you`, 'Flash again, or slow down and look left');
 }
 
 function jump(): boolean {
@@ -330,6 +358,9 @@ window.addEventListener('keydown', (e) => {
     case 'KeyB':
       honk();
       break;
+    case 'KeyL':
+      flashLights();
+      break;
     case 'KeyH':
       if (started) squawk();
       break;
@@ -358,7 +389,11 @@ window.addEventListener('keydown', (e) => {
       setProfile(world, PROFILES[profileIndex]!);
       stats.citySwitches++;
       hud.setCity(PROFILES[profileIndex]!.displayName);
-      hud.toast('🌏', `Now driving in ${PROFILES[profileIndex]!.displayName}`, 'Watch how the traffic changes');
+      hud.toast(
+        '🌏',
+        `Now driving in ${PROFILES[profileIndex]!.displayName}`,
+        PROFILES[profileIndex]!.twoWay ? 'Two-way road: keep left, overtake with care' : 'Watch how the traffic changes',
+      );
       break;
     case 'Escape':
       if (!hud.closeDrawers() && started) togglePause();
@@ -435,9 +470,12 @@ function step(dt: number): void {
   // Scale throttle here (not in the sim) for a car-like 0-100 km/h in about 5 s.
   const input: InputState = {
     steer: raw.steer,
-    throttle: raw.throttle > 0 ? raw.throttle * 0.3 * (1 - 0.5 * clamp01(world.player.speed / 285)) : raw.throttle,
+    throttle: raw.throttle > 0 ? raw.throttle * 0.3 * (1 - 0.5 * clamp01(world.player.speed / PLAYER_MAX_SPEED)) : raw.throttle,
   };
   const before = world.player.x;
+  prevPX = world.player.x;
+  prevPY = world.player.y;
+  flashCooldown = Math.max(0, flashCooldown - dt);
   stepWorld(world, input, dt);
   const p = world.player;
 
@@ -469,9 +507,17 @@ function step(dt: number): void {
   if (bumps.length && simTime - lastBumpAt > 0.8 && started) {
     lastBumpAt = simTime;
     const ped = bumps.some((b) => b.kind === 'pedestrian');
+    const headOn = bumps.some((b) => b.headOn);
     if (ped) {
       hud.toast('🚶', 'Watch out!', 'Pedestrians have right of way');
       audio.horn();
+    } else if (headOn) {
+      runCrashes++;
+      stats.crashes++;
+      shake = 1.2;
+      audio.crash();
+      particles.emit(40, car.group.position.clone().setY(1), '#ffcf7a', 8, -9, 1.2);
+      hud.toast('💥', 'Head-on!', 'Only overtake when the other lane is clear');
     } else {
       runCrashes++;
       stats.crashes++;
@@ -559,7 +605,7 @@ let screenshotPending = false;
 function updateCamera(dt: number): void {
   const pos = car.group.position;
   const k = 1 - Math.exp(-dt * 5);
-  const speedK = clamp01(world.player.speed / 285);
+  const speedK = clamp01(world.player.speed / PLAYER_MAX_SPEED);
   let fov = 55;
 
   if (camMode === 'orbit') {
@@ -629,7 +675,38 @@ function updateCamera(dt: number): void {
   lastCarPos.copy(pos);
 }
 
-function render(): void {
+/** Oncoming high beams in the driver's eyes: 0 (none) to 1 (blinded), and where on screen. */
+const glareProbe = new THREE.Vector3();
+function computeGlare(xM: number, zM: number): { amount: number; sx: number; sy: number } {
+  const none = { amount: 0, sx: 0, sy: 0 };
+  // Only from the driver's seat, and only once it is dark enough for beams to matter.
+  const dark = smoothstep(0.15, 0.6, env.night);
+  if (!started || dark <= 0 || !(camMode === 'chase' || camMode === 'pelican')) return none;
+  let best = none;
+  for (const a of world.agents) {
+    if (a.dir > 0 || !a.highBeam) continue;
+    const dx = m(a.x) - xM;
+    if (dx < 2 || dx > 200) continue;
+    // A beam fans out with distance: far off it lights both lanes, close by it is
+    // aimed past you. So the glare peaks in the last hundred metres before passing.
+    const lateral = Math.abs(sceneZ(ROAD, a.y) - zM);
+    const spread = 3 + dx * 0.12;
+    const aim = Math.exp(-((lateral / spread) ** 2));
+    const near = smoothstep(200, 90, dx);
+    const amount = dark * aim * near;
+    if (amount <= best.amount) continue;
+    glareProbe.set(m(a.x), 0.9, sceneZ(ROAD, a.y)).project(camera);
+    if (glareProbe.z > 1) continue; // behind the camera
+    best = {
+      amount,
+      sx: (glareProbe.x * 0.5 + 0.5) * window.innerWidth,
+      sy: (-glareProbe.y * 0.5 + 0.5) * window.innerHeight,
+    };
+  }
+  return best;
+}
+
+function render(alpha = 1): void {
   const now = performance.now();
   const dt = Math.min(0.1, (now - lastFrame) / 1000);
   lastFrame = now;
@@ -650,8 +727,9 @@ function render(): void {
   }
 
   const p = world.player;
-  const x = m(p.x);
-  const z = sceneZ(ROAD, p.y);
+  // Between the last two sim steps, like the traffic: no judder at any refresh rate.
+  const x = m(lerp(prevPX, p.x, alpha));
+  const z = sceneZ(ROAD, lerp(prevPY, p.y, alpha));
   const roll = rollT >= 0 ? rollT * Math.PI * 2 : 0;
   const wheelie = wheelieT > 0 ? Math.sin((wheelieT / 1.2) * Math.PI) : 0;
   car.update(
@@ -672,7 +750,14 @@ function render(): void {
   );
 
   focus.set(x, 0, z);
+  traffic.render(ROAD, alpha, x);
   updateCamera(dt);
+  const glare = computeGlare(x, z);
+  hud.setGlare(glare.amount, glare.sx, glare.sy);
+  if (glare.amount > 0.35 && !glareTipShown) {
+    glareTipShown = true;
+    hud.toast('😎', 'High beams!', 'Press L (or 💡) to flash your lights at them');
+  }
   env.update(hour, camera, focus, settings.clouds);
   (scene.fog as THREE.FogExp2).density *= settings.fog;
   sea.update(simTime, x, env, scene.fog as THREE.FogExp2, settings.waves);
@@ -690,7 +775,7 @@ function render(): void {
   if (!paused) audio.drive(gb.rpm, started ? inp.throttle : 0.3, m(p.speed), simTime);
 
   if (started) {
-    hud.update({ kmh: Math.abs(speedKmh), rpm: gb.rpm, gear: gb.gear, distM: Math.max(0, x - m(1700)), runSec, hour, fish: runFish, ach: unlocked.size });
+    hud.update({ kmh: Math.abs(speedKmh), rpm: gb.rpm, gear: gb.gear, distM: Math.max(0, x - m(PLAYER_START_X)), runSec, hour, fish: runFish, ach: unlocked.size });
     const next = fish.nextAhead(x, 60);
     const dz = next ? next.z - z : 0;
     hud.fishHint(next && !finished ? (Math.abs(dz) < 1.5 ? 0 : dz > 0 ? 1 : -1) : null, next ? next.x - x : 0);

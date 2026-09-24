@@ -10,6 +10,8 @@ export const SINGAPORE: TrafficProfile = {
   minFollowingDistancePx: 34,
   comfortableDecelPx: 210,
   maxAccelPx: 190,
+  twoWay: false,
+  highBeamProbability: 0,
   laneDiscipline: 0.97,
   lateralDriftPx: 2,
   centerlineCrossPerMin: 0.0, // C3 requires exactly zero

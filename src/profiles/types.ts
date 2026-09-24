@@ -48,6 +48,16 @@ export interface TrafficProfile {
   /** px/sec^2. */
   readonly maxAccelPx: number;
 
+  // ---- road use ----
+  /**
+   * true = one lane each way, keep left: +x traffic holds lane 0, oncoming (-x) traffic
+   * holds the far lane, and overtaking means borrowing the oncoming lane.
+   * false = every lane carries +x traffic.
+   */
+  readonly twoWay: boolean;
+  /** 0..1. Share of oncoming drivers who keep their high beams on after dark. */
+  readonly highBeamProbability: number;
+
   // ---- lateral: lane discipline ----
   /** 0..1. 1 = never leaves lane centre. 0 = lane markings are decorative. */
   readonly laneDiscipline: number;

@@ -210,6 +210,39 @@ changes clustering, dropping `overtakeUrgency` to ~0.03 is the cheap mitigation.
 
 ---
 
+## D10 — Trivandrum becomes a calm, keep-left, two-way road (player request, 2026-09-24)
+
+**Asked for:** smoother traffic with no pop-in; fewer, calmer Trivandrum vehicles with the odd
+sudden move; 150 km/h top speed; one lane each way, keep left, careful overtaking by AI and
+player; oncoming high beams at night.
+
+**Done:**
+- `TrafficProfile` gains `twoWay` and `highBeamProbability`. Trivandrum only; Singapore stays
+  one-way. Agents gain `dir` (+1 with the player, -1 oncoming) and `highBeam`.
+- Keep left: +x traffic holds lane 0, oncoming the far lane. Overtaking borrows the oncoming
+  lane only when the whole pass fits before oncoming traffic arrives (x1.4 plus 120px), and
+  only when there is room to pull back in ahead of the vehicle passed. A pass is cut short
+  when time-to-impact drops under 2.5 s. The cut back in is where the surprises come from.
+- Trivandrum retuned: 72 spawns/min across both directions (was 130), 3px wander (was 16),
+  0.5 straddles/min (was 7), smaller speed spread. Roadside stops and cut-ins kept, rarer.
+- Player top speed 285 -> 417 px/s (150 km/h); six-speed gearbox.
+- Pop-in: sim window 1536 -> 2400px, and the 3D layer fades traffic in and out between
+  190 m and 235 m. Traffic and the player are interpolated between 60 Hz sim steps.
+- High beams: a screen-space glare after dark; `L` (or the 💡 button) flashes the lights,
+  and each driver dips with p = 0.7.
+
+**Knowingly relaxed C3 guards.** The spawn-rate, population, drift-amplitude and straddle-count
+guards encoded "similar density, strong wander". The player explicitly asked for the opposite
+in Trivandrum, so those tests now assert "quieter but not empty" and "calmer but still
+off-centre". Mean-speed and pedestrian guards are unchanged and still pass.
+
+**Found on the way (pre-existing, now fixed):** `leaderOf` picked the nearest obstacle by
+centre, not near end, so a pedestrian beside a bus hid the bus; new vehicles could spawn at
+full speed just behind a stopped queue; lane changes ignored how fast the follower was
+closing. `SPIKE_ROAD` grew to 18000px so full-throttle headless runs still drive ~40 s.
+
+---
+
 ## Open — not yet decided, must not be improvised
 
 - ~~**The traffic-profile data shape.**~~ **RESOLVED 2026-08-02 in `PLAN.md` T3** — literal

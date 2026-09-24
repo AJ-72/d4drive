@@ -96,15 +96,19 @@ describe('C3 guard — the two profiles must not differ mainly by pace or densit
     expect(Math.abs(a - b) / Math.max(a, b)).toBeLessThan(0.1);
   });
 
-  it('spawn rates stay within 20% of each other', () => {
+  it('Trivandrum is the quieter road, but not an empty one', () => {
+    // Was "within 20%". The player asked (2026-09-24) for fewer, calmer vehicles in
+    // Trivandrum, on a two-way road where half of them are oncoming.
     const a = TRIVANDRUM.spawnRatePerMin;
     const b = SINGAPORE.spawnRatePerMin;
-    expect(Math.abs(a - b) / Math.max(a, b)).toBeLessThan(0.2);
+    expect(a).toBeLessThan(b);
+    expect(a).toBeGreaterThan(b * 0.4);
   });
 
   it('the difference lives in variance and gap acceptance instead', () => {
+    // 2x, not 3x: the calmer 2026-09-24 tuning narrowed Trivandrum's spread.
     expect(TRIVANDRUM.desiredSpeed.stdDev).toBeGreaterThan(
-      SINGAPORE.desiredSpeed.stdDev * 3,
+      SINGAPORE.desiredSpeed.stdDev * 2,
     );
     expect(TRIVANDRUM.minAcceptedGapFactor).toBeLessThan(1.0);
     expect(SINGAPORE.minAcceptedGapFactor).toBeGreaterThan(2.0);

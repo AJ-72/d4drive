@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { SINGAPORE } from '../profiles/singapore';
 import { TRIVANDRUM } from '../profiles/trivandrum';
 import { VEHICLE_SPECS } from '../profiles/types';
+import { COAST_ROAD } from '../road/road';
 import { runHeadless } from './harness';
 import { fleetCensus } from './world';
 
@@ -16,6 +17,9 @@ describe('T5 — spawning and despawning', () => {
       profile: TRIVANDRUM,
       // Driving, not parked. A parked player blocks a lane permanently until T8 adds
       // lane changing, so a parked run measures jam growth rather than spawn balance.
+      // The coast road, because at full throttle the player reaches the end of the
+      // spike road in ~40 s and then sits in the keep-left lane: that is parked.
+      road: COAST_ROAD,
       input: { throttle: 1, steer: 0 },
       onStep: (w) => counts.push(w.agents.length),
     });

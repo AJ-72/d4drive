@@ -13,6 +13,7 @@ export function validateProfile(p: TrafficProfile): void {
     'yieldProbability',
     'jaywalkProbability',
     'pedestrianHesitation',
+    'highBeamProbability',
   ];
   for (const f of unit) {
     const v = p[f] as unknown as number;
