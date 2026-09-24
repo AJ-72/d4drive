@@ -27,7 +27,18 @@ export class GameAudio {
       void this.ctx.resume();
       return;
     }
-    const ctx = new AudioContext();
+    // No Web Audio (or it refuses a context): the game runs silent. Every other
+    // method already does nothing without a context. Throwing here used to abort
+    // the Start button.
+    const w = window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext };
+    const Ctor = w.AudioContext ?? w.webkitAudioContext;
+    if (!Ctor) return;
+    let ctx: AudioContext;
+    try {
+      ctx = new Ctor();
+    } catch {
+      return;
+    }
     this.ctx = ctx;
     this.master = ctx.createGain();
     this.master.connect(ctx.destination);

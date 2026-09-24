@@ -26,6 +26,14 @@
   </head>
   <body>
     <div id="app"></div>
+    <noscript>
+      <p style="color:#f4f1ea;padding:24px;max-width:460px">D4Drive needs JavaScript. Turn it on for this site and reload.</p>
+    </noscript>
+    <!-- Browsers too old for ES modules never run the game code at all; tell them why. -->
+    <script nomodule>
+      document.getElementById('app').innerHTML =
+        '<p style="color:#f4f1ea;padding:24px;max-width:460px">D4Drive needs a newer browser. Update Chrome, Firefox, Safari or Edge, then open this page again.</p>';
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

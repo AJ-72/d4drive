@@ -1,4 +1,5 @@
 import './hud.css';
+import { supports } from '../support';
 import { ACHIEVEMENTS } from './achievements';
 
 export const CAMERA_MODES = [
@@ -297,10 +298,12 @@ export class Hud {
       this.cb.screenshot();
     });
     tool('🔗', 'Share', () => this.cb.share());
-    tool('⛶', 'Full screen', () => {
-      if (document.fullscreenElement) void document.exitFullscreen();
-      else void document.documentElement.requestFullscreen?.();
-    });
+    if (supports('fullscreen')) {
+      tool('⛶', 'Full screen', () => {
+        if (document.fullscreenElement) void document.exitFullscreen();
+        else void document.documentElement.requestFullscreen?.();
+      });
+    }
     m.append(grid);
   }
 
