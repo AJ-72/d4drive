@@ -243,6 +243,16 @@ closing. `SPIKE_ROAD` grew to 18000px so full-throttle headless runs still drive
 
 ---
 
+## D11 — Pedestrians enter out of view (player request, 2026-09-24)
+
+Pedestrians used to spawn on the verge, in plain view. They now start and finish off the road:
+on the land side 150px (15 m) out, inside the building row, so they walk out of the buildings;
+on the sea side 60px (6 m) out, at the railing, where nothing hides them, so the game fades them
+in and out over their first and last 30px. They walk freely up to the kerb and only wait there
+for traffic, as before. On the pavement they now stand on it rather than in it.
+
+---
+
 ## Open — not yet decided, must not be improvised
 
 - ~~**The traffic-profile data shape.**~~ **RESOLVED 2026-08-02 in `PLAN.md` T3** — literal

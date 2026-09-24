@@ -291,6 +291,15 @@ const PED_HESITATE_SEC = 1.1;
 const PED_LOOKOUT_PX = 14;
 /** A pedestrian will not step off the kerb into a vehicle this close. */
 const PED_KERB_LOOKAHEAD_PX = 150;
+/**
+ * Where pedestrians come from and go to, beyond the road edge. Spawning them right at
+ * the kerb made people pop into existence in plain view. The 3D coast lays out the
+ * sea railing ~6.8 m beyond the top edge and the building fronts ~9.5 m beyond the
+ * bottom edge: people walk out of the buildings, and appear at the railing (where
+ * the game fades them in, as there is nothing to hide behind on the sea side).
+ */
+export const PED_TOP_OFF_PX = 60;
+export const PED_BOTTOM_OFF_PX = 150;
 
 function spawnPedestrian(w: World): void {
   const { profile: p, rng } = w;
@@ -315,8 +324,8 @@ function spawnPedestrian(w: World): void {
   w.pedestrians.push({
     id: w.nextId++,
     x,
-    y: fromTop ? -w.road.shoulderPx : rw + w.road.shoulderPx,
-    targetY: fromTop ? rw + w.road.shoulderPx : -w.road.shoulderPx,
+    y: fromTop ? -PED_TOP_OFF_PX : rw + PED_BOTTOM_OFF_PX,
+    targetY: fromTop ? rw + PED_BOTTOM_OFF_PX : -PED_TOP_OFF_PX,
     jaywalking,
     hesitateUntil: -1,
     nextHesitateCheckAt: w.time + 0.5,
@@ -325,10 +334,15 @@ function spawnPedestrian(w: World): void {
   if (jaywalking) w.counters.jaywalks++;
 }
 
-/** True once the pedestrian has finished crossing and is off the far side. */
-function nearSideDone(w: World, ped: Pedestrian): boolean {
+/**
+ * The kerb line this pedestrian waits at before crossing (the verge's outer edge on
+ * the side they start from), and whether stepping `dy` would take them over it.
+ */
+function stepsOffKerb(w: World, ped: Pedestrian, dy: number): boolean {
   const rw = roadWidthPx(w.road);
-  return ped.targetY > rw ? ped.y >= rw : ped.y <= 0;
+  const down = ped.targetY > ped.y;
+  const kerb = down ? -w.road.shoulderPx : rw + w.road.shoulderPx;
+  return down ? ped.y <= kerb && ped.y + dy > kerb : ped.y >= kerb && ped.y + dy < kerb;
 }
 
 /** Is a vehicle bearing down on this pedestrian's crossing point? */
@@ -362,12 +376,12 @@ function updatePedestrians(w: World, dt: number): void {
     // Stepping off the kerb in front of a moving vehicle. Even in Trivandrum people
     // look before stepping out — without this, pedestrians walk into the side of
     // cars already alongside them and no amount of driver braking can help.
-    const aboutToStepOn = !onRoad && !nearSideDone(w, ped);
-    const blocked = aboutToStepOn && vehicleImminent(w, ped);
+    // They walk up to the kerb freely and only stop there to look.
+    const dy = Math.sign(ped.targetY - ped.y) * p.pedestrianSpeedPx * dt;
+    const blocked = stepsOffKerb(w, ped, dy) && vehicleImminent(w, ped);
 
     if (w.time >= ped.hesitateUntil && !blocked) {
-      const dir = Math.sign(ped.targetY - ped.y);
-      ped.y += dir * p.pedestrianSpeedPx * dt;
+      ped.y += dy;
     }
 
     const arrived = Math.abs(ped.y - ped.targetY) < 4;
