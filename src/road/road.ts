@@ -52,3 +52,17 @@ export function laneAtY(road: Road, y: number): number {
 }
 
 export const roadWidthPx = (road: Road): number => road.laneCount * road.laneWidthPx;
+
+/**
+ * The 3D game's road: the same cross-section as SPIKE_ROAD, five times longer, so a
+ * run is a real commute (6 km) rather than a 1 km test strip. Traffic is simulated in
+ * a window around the player (SIM_MARGIN_PX), so length does not change density.
+ * Crossings keep SPIKE_ROAD's 1500px spacing for the same density reason.
+ */
+export const COAST_ROAD: Road = {
+  lengthPx: 60000,
+  laneCount: 2,
+  laneWidthPx: 90,
+  crossingsPx: Array.from({ length: 39 }, (_, i) => (i + 1) * 1500),
+  shoulderPx: 26,
+};
