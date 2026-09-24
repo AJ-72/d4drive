@@ -693,7 +693,8 @@ function computeGlare(xM: number, zM: number): { amount: number; sx: number; sy:
     const spread = 3 + dx * 0.12;
     const aim = Math.exp(-((lateral / spread) ** 2));
     const near = smoothstep(200, 90, dx);
-    const amount = dark * aim * near;
+    // 0.6: enough to make you squint and slow down, never a white-out.
+    const amount = 0.6 * dark * aim * near;
     if (amount <= best.amount) continue;
     glareProbe.set(m(a.x), 0.9, sceneZ(ROAD, a.y)).project(camera);
     if (glareProbe.z > 1) continue; // behind the camera
@@ -767,6 +768,8 @@ function render(alpha = 1): void {
   renderer.toneMappingExposure = settings.exposure * lerp(1, 1.5, env.night);
   // By day only true HDR (lamps, sun glints) should bloom; at night let more glow.
   bloom.threshold = lerp(1.0, 0.7, env.night);
+  // By day the glow only softened the picture: keep a trace of it for sun glints.
+  bloom.strength = settings.bloomStrength * lerp(0.35, 1, env.night);
 
   const speedKmh = kmh(p.speed);
   const gb = gearbox(speedKmh);
