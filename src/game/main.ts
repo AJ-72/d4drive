@@ -9,6 +9,7 @@ import { createKeyboardInput, type InputState } from '../input/input';
 import { SINGAPORE } from '../profiles/singapore';
 import { TRIVANDRUM } from '../profiles/trivandrum';
 import { validateProfile } from '../profiles/validate';
+import { getAssessment, optionalSummary, supports } from '../support';
 import { COAST_ROAD, laneCenterY } from '../road/road';
 import { PLAYER_MAX_SPEED, PLAYER_START_X } from '../sim/player';
 import { createWorld, flashHeadlights, setProfile, stepWorld, type World } from '../sim/world';
@@ -79,6 +80,12 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 app.appendChild(renderer.domElement);
+// The browser can take the GPU back at any time (memory pressure, a driver reset,
+// too many tabs). three.js restores the context when it returns; say what happened.
+renderer.domElement.addEventListener('webglcontextlost', () => {
+  hud.toast('⚠️', 'Graphics paused by the browser', 'It usually comes back by itself. If not, reload the page.', 8000);
+});
+renderer.domElement.addEventListener('webglcontextrestored', () => hud.toast('✅', 'Graphics back'));
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 4000);
@@ -168,6 +175,9 @@ const hud = new Hud(
           ? 'Keep left · W/S throttle · A/D overtake · L flash lights'
           : 'W/S throttle · A/D change lane · Space jump · F stunt',
       );
+      // After the welcome, one line on anything this browser cannot do.
+      const limits = optionalSummary(getAssessment());
+      if (limits) window.setTimeout(() => hud.toast('ℹ️', 'Limited in this browser', limits, 6000), 2800);
     },
     camera: (mode) => setCamera(mode),
     setHour(h) {
@@ -199,7 +209,12 @@ const hud = new Hud(
       u.searchParams.set('city', PROFILES[profileIndex]!.id);
       u.searchParams.set('t', hour.toFixed(2));
       u.searchParams.set('cam', camMode);
-      void navigator.clipboard?.writeText(u.toString()).then(
+      if (!navigator.clipboard?.writeText) {
+        // No clipboard here: show the link so it can be copied by hand.
+        hud.toast('🔗', 'Share link', u.toString(), 8000);
+        return;
+      }
+      void navigator.clipboard.writeText(u.toString()).then(
         () => hud.toast('🔗', 'Share link copied', 'Opens at this time of day, city and camera'),
         () => hud.toast('🔗', 'Could not copy', u.toString(), 6000),
       );
@@ -259,7 +274,8 @@ function applySettings(): void {
   const ratio = [0.75, 1, Math.min(dpr, 1.5), Math.min(dpr, 2)][settings.quality]!;
   renderer.setPixelRatio(ratio);
   env.setShadowSize([0, 1024, 2048, 4096][settings.quality]!);
-  bloom.enabled = settings.bloom && settings.quality > 0;
+  // The bloom pass renders into half-float targets; some GPUs cannot.
+  bloom.enabled = settings.bloom && settings.quality > 0 && supports('bloom');
   bloom.strength = settings.bloomStrength;
   car.setHelmet(settings.helmet);
   car.setScarf(settings.scarf);
