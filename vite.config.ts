@@ -5,6 +5,9 @@ import { defineConfig } from 'vite';
 // already holding it. No hardcoded --port flag lives in package.json either;
 // both would defeat autoPort.
 export default defineConfig({
+  // Relative asset paths, so the build works wherever it is hosted — including a
+  // GitHub Pages project site under /<repo>/ — without hardcoding the repo name.
+  base: './',
   server: {
     port: process.env.PORT ? Number(process.env.PORT) : 5173,
     strictPort: false,
