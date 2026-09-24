@@ -76,7 +76,8 @@ describe('keep-left two-way road (Trivandrum)', () => {
   });
 
   it('drops oncoming traffic when switching to a one-way city', () => {
-    const w = runHeadless({ seconds: 40, profile: TRIVANDRUM, input: DRIVING });
+    // 25 s: still mid-road. Near the road's end nothing oncoming can spawn.
+    const w = runHeadless({ seconds: 25, profile: TRIVANDRUM, input: DRIVING });
     expect(w.agents.some((a) => a.dir < 0)).toBe(true);
     setProfile(w, SINGAPORE);
     expect(w.agents.every((a) => a.dir > 0)).toBe(true);

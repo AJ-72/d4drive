@@ -14,8 +14,8 @@ import { m, mulberry } from './units';
 
 // Cross-section, in scene metres from the road centreline (z = 0). Sea is at -z.
 const SHOULDER = 2.6;
-const WALK_W = 4.4;
-const WALK_TOP = 0.2;
+export const WALK_W = 4.4;
+export const WALK_TOP = 0.2;
 const CHUNK = 250; // metres per instanced batch, so off-screen scenery is culled
 
 function paint(g: THREE.BufferGeometry, hex: string | THREE.Color): THREE.BufferGeometry {

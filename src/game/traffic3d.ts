@@ -1,7 +1,15 @@
 import * as THREE from 'three';
 import { VEHICLE_SPECS, type VehicleKind } from '../profiles/types';
-import type { Road } from '../road/road';
-import { SIM_MARGIN_PX, type Agent, type Pedestrian, type World } from '../sim/world';
+import { roadWidthPx, type Road } from '../road/road';
+import {
+  PED_BOTTOM_OFF_PX,
+  PED_TOP_OFF_PX,
+  SIM_MARGIN_PX,
+  type Agent,
+  type Pedestrian,
+  type World,
+} from '../sim/world';
+import { WALK_TOP, WALK_W } from './scenery';
 import { lerp, m, sceneZ, smoothstep } from './units';
 
 // Mirrors the sim's agents and pedestrians as 3D meshes. Read-only with respect to
@@ -212,8 +220,22 @@ interface Tracked {
 interface PedMesh {
   group: THREE.Group;
   legs: THREE.Object3D[];
+  /** This person's own materials, so each can fade on its own. */
+  mats: THREE.MeshStandardMaterial[];
   lastY: number;
   seen: boolean;
+}
+
+/**
+ * How visible a pedestrian is at sim y. They start and finish off the road: at the
+ * sea railing, where there is nothing to hide behind, so they fade in and out over
+ * the first/last 30px; and inside the building row, which hides them — the fade
+ * there only covers the gaps between buildings.
+ */
+function pedOpacity(road: Road, y: number): number {
+  const seaEnd = -PED_TOP_OFF_PX;
+  const landEnd = roadWidthPx(road) + PED_BOTTOM_OFF_PX;
+  return smoothstep(seaEnd, seaEnd + 30, y) * (1 - smoothstep(landEnd - 40, landEnd - 5, y));
 }
 
 export class Traffic3D {
@@ -325,7 +347,19 @@ export class Traffic3D {
     pm.seen = true;
     // Pedestrians on the carriageway stand on it; on the kerb they stand on the pavement.
     const z = sceneZ(road, p.y);
-    pm.group.position.set(m(p.x), 0.02, z);
+    const edge = m(roadWidthPx(road)) / 2 + m(road.shoulderPx);
+    const onWalk = Math.abs(z) >= edge && Math.abs(z) <= edge + WALK_W;
+    pm.group.position.set(m(p.x), onWalk ? WALK_TOP : 0.02, z);
+    const opacity = pedOpacity(road, p.y);
+    pm.group.visible = opacity > 0.01;
+    const fading = opacity < 0.995;
+    for (const mm of pm.mats) {
+      if (mm.transparent !== fading) {
+        mm.transparent = fading;
+        mm.needsUpdate = true;
+      }
+      mm.opacity = opacity;
+    }
     const dy = p.y - pm.lastY;
     const moving = Math.abs(dy) > 0.01;
     if (moving) pm.group.rotation.y = dy > 0 ? -Math.PI / 2 : Math.PI / 2;
@@ -337,9 +371,9 @@ export class Traffic3D {
 
   private buildPed(n: number): PedMesh {
     const g = new THREE.Group();
-    const shirt = mat(SHIRTS[n % SHIRTS.length]!);
-    const skin = mat(SKIN[n % SKIN.length]!);
-    const mundu = mat(n % 3 === 0 ? '#f4efe4' : '#34495e');
+    const shirt = mat(SHIRTS[n % SHIRTS.length]!).clone();
+    const skin = mat(SKIN[n % SKIN.length]!).clone();
+    const mundu = mat(n % 3 === 0 ? '#f4efe4' : '#34495e').clone();
     const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.5, 4, 8), shirt);
     body.position.y = 1.15;
     body.castShadow = true;
@@ -358,6 +392,6 @@ export class Traffic3D {
       legs.push(pivot);
     }
     g.add(body, head);
-    return { group: g, legs, lastY: 0, seen: true };
+    return { group: g, legs, mats: [shirt, skin, mundu], lastY: 0, seen: true };
   }
 }

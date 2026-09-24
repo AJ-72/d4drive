@@ -5,7 +5,7 @@ import { TRIVANDRUM } from '../profiles/trivandrum';
 import { roadWidthPx, SPIKE_ROAD } from '../road/road';
 import { VEHICLE_SPECS } from '../profiles/types';
 import { runHeadless } from './harness';
-import { createWorld, setProfile, stepWorld } from './world';
+import { createWorld, PED_BOTTOM_OFF_PX, PED_TOP_OFF_PX, setProfile, stepWorld } from './world';
 
 const DRIVING = { throttle: 1, steer: 0 };
 
@@ -135,5 +135,34 @@ describe('T12 — arrived state (C1)', () => {
     for (let i = 0; i < Math.round(10 / FIXED_DT); i++) stepWorld(w, DRIVING, FIXED_DT);
     expect(w.player.x).toBeLessThan(SPIKE_ROAD.lengthPx);
     expect(w.arrived).toBe(false);
+  });
+});
+
+describe('pedestrians enter out of view', () => {
+  it('start well off the road, walk to the kerb, and only then wait for traffic', () => {
+    const rw = roadWidthPx(SPIKE_ROAD);
+    let starts = 0;
+    let offRoadStarts = 0;
+    const seen = new Set<number>();
+    let crossed = 0;
+    runHeadless({
+      seconds: 90,
+      profile: TRIVANDRUM,
+      input: DRIVING,
+      onStep: (w) => {
+        for (const ped of w.pedestrians) {
+          if (!seen.has(ped.id)) {
+            seen.add(ped.id);
+            starts++;
+            if (ped.y <= -PED_TOP_OFF_PX + 1 || ped.y >= rw + PED_BOTTOM_OFF_PX - 1) offRoadStarts++;
+          }
+          if (ped.y > 0 && ped.y < rw) crossed++;
+        }
+      },
+    });
+    expect(starts).toBeGreaterThan(10);
+    expect(offRoadStarts).toBe(starts);
+    // They still reach the road and cross it.
+    expect(crossed).toBeGreaterThan(0);
   });
 });
