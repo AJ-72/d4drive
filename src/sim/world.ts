@@ -17,12 +17,18 @@ import { createPlayer, updatePlayer, type Player } from './player';
 // HANDOFF A7: simulate a window around the player, spawn at its edges, despawn beyond.
 // Simulating the whole 12000px road is wasteful; simulating only the visible area makes
 // traffic pop into existence in view, which reads as a bug.
-export const SIM_MARGIN_PX = 1536; // 1.2 screen widths
+// 240 m: the 3D game fades traffic in from the haze between 190 m and 235 m, so the
+// spawn edge is never in view. At 1536px (154 m) vehicles appeared mid-road.
+export const SIM_MARGIN_PX = 2400;
 const DESPAWN_SLACK_PX = 320;
 
 export interface Agent {
   readonly id: number;
   readonly kind: VehicleKind;
+  /** +1 drives toward +x with the player; -1 is oncoming (two-way profiles only). */
+  readonly dir: 1 | -1;
+  /** Oncoming driver with high beams on. The game dazzles the player with it after dark. */
+  highBeam: boolean;
   x: number;
   y: number;
   speed: number;
@@ -65,6 +71,7 @@ export interface Pedestrian {
 /** Anything a driver must not drive into. Vehicles, the player, and pedestrians. */
 interface Obstacle {
   x: number;
+  /** Along the observer's heading: negative means it is driving toward the observer. */
   speed: number;
   halfLength: number;
 }
@@ -85,6 +92,12 @@ export interface Counters {
   /** C3 Trivandrum bullet 5: crossed away from a marked crossing. */
   jaywalks: number;
   pedestriansSpawned: number;
+  /** Two-way roads: vehicles spawned driving toward the player. */
+  oncomingSpawned: number;
+  /** Two-way roads: pulled out into the oncoming lane to pass. */
+  passes: number;
+  /** Two-way roads: cut a pass short because something was coming. */
+  passesAborted: number;
 }
 
 export interface World {
@@ -104,13 +117,26 @@ export interface World {
   arrived: boolean;
 }
 
+/** Keep left: +x traffic holds lane 0, oncoming traffic the far lane. */
+export function homeLane(road: Road, dir: 1 | -1): number {
+  return dir > 0 ? 0 : road.laneCount - 1;
+}
+
+/** Distance from `a` to `x` along a's heading. Negative means behind it. */
+function aheadOf(a: Agent, x: number): number {
+  return (x - a.x) * a.dir;
+}
+
 export function createWorld(road: Road, profile: TrafficProfile, seed?: number): World {
+  const player = createPlayer(road);
+  // On a keep-left road the player starts in the left lane, not facing oncoming traffic.
+  if (profile.twoWay) player.y = laneCenterY(road, homeLane(road, 1));
   return {
     road,
     profile,
     agents: [],
     pedestrians: [],
-    player: createPlayer(road),
+    player,
     time: 0,
     rng: createRng(seed),
     counters: {
@@ -124,6 +150,9 @@ export function createWorld(road: Road, profile: TrafficProfile, seed?: number):
       roadsideStops: 0,
       jaywalks: 0,
       pedestriansSpawned: 0,
+      oncomingSpawned: 0,
+      passes: 0,
+      passesAborted: 0,
     },
     nextId: 1,
     spawnAccumulator: 0,
@@ -141,17 +170,40 @@ function longitudinalGap(a: Agent, bx: number, bKind: VehicleKind): number {
   return Math.abs(a.x - bx) - (VEHICLE_SPECS[a.kind].lengthPx + VEHICLE_SPECS[bKind].lengthPx) / 2;
 }
 
-function hasRoomAt(w: World, x: number, lane: number, kind: VehicleKind): boolean {
+/** A new vehicle never appears nose to nose with one already heading at it. */
+const HEAD_ON_SPAWN_CLEAR_PX = 400;
+/** Two-way roads: share of spawns that are oncoming traffic. */
+const ONCOMING_SHARE = 0.5;
+
+function hasRoomAt(w: World, x: number, lane: number, kind: VehicleKind, dir: 1 | -1 = 1): boolean {
   // Clearance must be at least the gap this profile's drivers would choose to hold.
   // A fixed 12px let Singapore vehicles spawn closer than their own 34px following
   // distance, so the fleet started every life already too close and compressed below
   // the authored floor — which C3 reads as Singapore failing to keep its distance.
   const need = Math.max(w.profile.minFollowingDistancePx, 12);
   for (const a of w.agents) {
-    if (a.lane !== lane) continue;
-    if (longitudinalGap(a, x, kind) < need) return false;
+    if (!occupies(w, a, lane)) continue;
+    const gap = longitudinalGap(a, x, kind);
+    if (gap < (a.dir === dir ? need : HEAD_ON_SPAWN_CLEAR_PX)) return false;
   }
   return true;
+}
+
+/**
+ * Entry speed: the desired speed, unless a vehicle close ahead is slower. Entering at
+ * full speed a few metres behind a stopped queue left no room to brake — measured as
+ * a Singapore bike stopping 11px short, below that city's 34px floor.
+ */
+function spawnSpeed(w: World, x: number, lane: number, kind: VehicleKind, dir: 1 | -1, desired: number): number {
+  const p = w.profile;
+  let speed = desired;
+  for (const b of w.agents) {
+    if (b.dir !== dir || !occupies(w, b, lane)) continue;
+    if ((b.x - x) * dir <= 0) continue;
+    const room = Math.max(0, longitudinalGap(b, x, kind) - p.minFollowingDistancePx);
+    speed = Math.min(speed, b.speed + Math.sqrt(2 * p.comfortableDecelPx * room));
+  }
+  return speed;
 }
 
 function spawnOne(w: World): void {
@@ -159,11 +211,15 @@ function spawnOne(w: World): void {
   const kind = weightedPick(p.fleetMix, VEHICLE_KINDS, rng);
   const desiredSpeed = rollDesiredSpeed(p, kind, rng);
   const firstLane = Math.min(w.road.laneCount - 1, Math.floor(rng() * w.road.laneCount));
+  // Only two-way profiles draw these, so one-way traffic replays exactly as before.
+  const dir: 1 | -1 = p.twoWay && rng() < ONCOMING_SHARE ? -1 : 1;
+  const highBeam = dir < 0 && rng() < p.highBeamProbability;
 
-  // HANDOFF A1: traffic is one-way (+x). A vehicle slower than the player would never
+  // HANDOFF A1: with-flow traffic moves +x. A vehicle slower than the player would never
   // enter view if spawned behind, and a faster one would never enter if spawned ahead —
-  // so each spawns at the edge it can actually traverse.
-  const behind = desiredSpeed >= w.player.speed;
+  // so each spawns at the edge it can actually traverse. Oncoming traffic always
+  // enters from ahead.
+  const behind = dir > 0 && desiredSpeed >= w.player.speed;
   const x = behind ? w.player.x - SIM_MARGIN_PX : w.player.x + SIM_MARGIN_PX;
 
   if (x < 0 || x > w.road.lengthPx) return;
@@ -173,10 +229,13 @@ function spawnOne(w: World): void {
   // check far more often than a 26px bike, and measurement showed buses landing at
   // 7.7% against an authored 11%. Singapore's bus share is load-bearing for C3's
   // queueing check (PLAN.md T3), so this bias is not cosmetic.
+  // A keep-left road has one lane per direction, so there is nothing to try.
+  const candidates = p.twoWay
+    ? [homeLane(w.road, dir)]
+    : Array.from({ length: w.road.laneCount }, (_, i) => (firstLane + i) % w.road.laneCount);
   let lane = -1;
-  for (let i = 0; i < w.road.laneCount; i++) {
-    const candidate = (firstLane + i) % w.road.laneCount;
-    if (hasRoomAt(w, x, candidate, kind)) {
+  for (const candidate of candidates) {
+    if (hasRoomAt(w, x, candidate, kind, dir)) {
       lane = candidate;
       break;
     }
@@ -191,9 +250,11 @@ function spawnOne(w: World): void {
   w.agents.push({
     id: w.nextId++,
     kind,
+    dir,
+    highBeam,
     x,
     y: laneCenterY(w.road, lane),
-    speed: desiredSpeed,
+    speed: spawnSpeed(w, x, lane, kind, dir, desiredSpeed),
     desiredSpeed,
     lane,
     targetLane: lane,
@@ -207,6 +268,7 @@ function spawnOne(w: World): void {
     nextRoadsideCheckAt: w.time + 1,
   });
   w.counters.spawned++;
+  if (dir < 0) w.counters.oncomingSpawned++;
 }
 
 function despawn(w: World): void {
@@ -272,8 +334,8 @@ function nearSideDone(w: World, ped: Pedestrian): boolean {
 /** Is a vehicle bearing down on this pedestrian's crossing point? */
 function vehicleImminent(w: World, ped: Pedestrian): boolean {
   for (const a of w.agents) {
-    if (a.x > ped.x) continue;
-    if (ped.x - a.x > PED_KERB_LOOKAHEAD_PX) continue;
+    const d = aheadOf(a, ped.x);
+    if (d < 0 || d > PED_KERB_LOOKAHEAD_PX) continue;
     if (a.speed < 12) continue; // stopped or crawling: safe to step out
     return true;
   }
@@ -336,6 +398,9 @@ function updateRoadsideStops(w: World): void {
  */
 export function setProfile(w: World, profile: TrafficProfile): void {
   w.profile = profile;
+  // Oncoming traffic cannot exist on a one-way road. With-flow traffic stays; any of it
+  // in the far lane of a keep-left road pulls back in as soon as there is room.
+  if (!profile.twoWay) w.agents = w.agents.filter((a) => a.dir > 0);
   for (const a of w.agents) {
     // Re-roll against the new profile, preserving nothing but identity and position.
     a.desiredSpeed = rollDesiredSpeed(profile, a.kind, w.rng);
@@ -377,6 +442,21 @@ export function stepWorld(w: World, input: InputState, dt: number): void {
 }
 
 const OVERTAKE_CHECK_SEC = 0.3;
+const LATERAL_EASE_PER_SEC = 3;
+/** Straddling the centreline of a keep-left road needs this long clear of oncoming. */
+const STRADDLE_ONCOMING_SEC = 4;
+/** Required oncoming clearance is the pass's own length in time, times this. */
+const PASS_SAFETY = 1.4;
+/** Extra oncoming clearance on top of the time-based requirement, px. */
+const PASS_MARGIN_PX = 120;
+/** A pass that would take longer than this is not attempted. */
+const PASS_MAX_SEC = 7;
+/** Not worth pulling out to gain less than this, px/sec. */
+const PASS_MIN_GAIN_PX = 20;
+/** Out in the oncoming lane with less time than this to impact: get back in NOW. */
+const ABORT_TTC_SEC = 2.5;
+/** Stopped this close to oncoming traffic, a passing driver gives up and pulls in. */
+const FACE_OFF_PX = 150;
 const STRADDLE_MIN_SEC = 1.2;
 const STRADDLE_VAR_SEC = 1.6;
 const LANE_SETTLE_PX = 3;
@@ -474,7 +554,11 @@ function updateLateral(w: World, dt: number): void {
           const g = gapInLane(w, pick, a.x, a.kind, a);
           return g.ahead < STRADDLE_CLEARANCE_PX || g.behind < STRADDLE_CLEARANCE_PX;
         })();
-      if (pick !== undefined && !alongside) {
+      // On a keep-left road the neighbour lane is the oncoming one: only ride the line
+      // when nothing is coming for a good few seconds.
+      const facing =
+        pick !== undefined && p.twoWay && !oncomingClear(w, a, pick, a.speed * STRADDLE_ONCOMING_SEC);
+      if (pick !== undefined && !alongside && !facing) {
         a.straddleLane = pick;
         a.straddleUntil = w.time + STRADDLE_MIN_SEC + rng() * STRADDLE_VAR_SEC;
         w.counters.centerlineStraddles++;
@@ -483,7 +567,9 @@ function updateLateral(w: World, dt: number): void {
     }
 
     // ---- T8: overtaking and gap acceptance -------------------------------------
-    if (w.time >= a.nextOvertakeCheckAt) {
+    if (p.twoWay) {
+      passOnTwoWay(w, a);
+    } else if (w.time >= a.nextOvertakeCheckAt) {
       a.nextOvertakeCheckAt = w.time + OVERTAKE_CHECK_SEC;
       const settled = a.lane === a.targetLane && w.time >= a.straddleUntil;
       if (settled) {
@@ -505,7 +591,7 @@ function updateLateral(w: World, dt: number): void {
             rng() < p.cutInAggression ? p.minFollowingDistancePx : p.followingDistance.mean;
           for (const cand of neighbourLanes(w.road, a.lane)) {
             const g = gapInLane(w, cand, a.x, a.kind, a);
-            if (g.ahead < need || g.behind < rearNeed) continue;
+            if (g.ahead < need || g.behind < rearNeed + closingAllowance(p, a, g.follower)) continue;
 
             a.targetLane = cand;
             w.counters.laneChanges++;
@@ -539,10 +625,13 @@ function updateLateral(w: World, dt: number): void {
     // as restlessness in a frozen frame, which TEST_PROTOCOL D-2 leans on.
     const drift = Math.sin(w.time * 1.7 + a.driftPhase) * p.lateralDriftPx;
     const want = baseY + drift;
-    const step = p.lateralSpeedPx * dt;
     const halfW = spec.widthPx / 2;
 
-    let nextY = a.y + clampAccel(want - a.y, step, step);
+    // Eased, not a constant-rate slide: full lateral speed across the lane, then a
+    // gentle settle onto the new line. The constant-rate slide started and stopped
+    // dead, which read as vehicles jumping sideways.
+    const vy = clampAccel((want - a.y) * LATERAL_EASE_PER_SEC, p.lateralSpeedPx, p.lateralSpeedPx);
+    let nextY = a.y + vy * dt;
     nextY = Math.max(halfW, Math.min(roadWidthPx(w.road) - halfW, nextY));
 
     // Lateral safety guard. The longitudinal backstop cannot help here: the
@@ -562,6 +651,186 @@ function updateLateral(w: World, dt: number): void {
 }
 
 /**
+ * Extra rear gap for a follower that is closing fast. Without it, a vehicle pulling
+ * out from a standstill in front of one doing full speed leaves it no room to brake
+ * (measured: a Singapore bike stopped 1px short of a car). Aggressive drivers
+ * discount it, so Trivandrum cut-ins still force the odd hard brake.
+ */
+function closingAllowance(p: TrafficProfile, a: Agent, follower: Agent | null): number {
+  if (!follower) return 0;
+  const closing = Math.max(0, follower.speed - a.speed);
+  return (closing * closing) / (2 * p.comfortableDecelPx) * (1 - p.cutInAggression);
+}
+
+/** Nearest vehicle ahead of `a` in `lane` that is driving TOWARD it, the player included. */
+function oncomingIn(w: World, a: Agent, lane: number): { gap: number; speed: number } | null {
+  const half = VEHICLE_SPECS[a.kind].lengthPx / 2;
+  let best: { gap: number; speed: number } | null = null;
+  for (const b of w.agents) {
+    if (b === a || b.dir === a.dir || !occupies(w, b, lane)) continue;
+    const d = aheadOf(a, b.x);
+    if (d <= 0) continue;
+    const gap = d - half - VEHICLE_SPECS[b.kind].lengthPx / 2;
+    if (!best || gap < best.gap) best = { gap, speed: b.speed };
+  }
+  // The player always drives +x, so it is oncoming for -x traffic.
+  if (a.dir < 0 && playerLane(w) === lane) {
+    const d = aheadOf(a, w.player.x);
+    const gap = d - half - VEHICLE_SPECS.car.lengthPx / 2;
+    if (d > 0 && (!best || gap < best.gap)) best = { gap, speed: Math.max(0, w.player.speed) };
+  }
+  return best;
+}
+
+function oncomingClear(w: World, a: Agent, lane: number, needPx: number): boolean {
+  const on = oncomingIn(w, a, lane);
+  return !on || on.gap > needPx;
+}
+
+/** Clearance ahead of and behind `a` in `lane`, counting only traffic going its way. */
+function sameWayGap(
+  w: World,
+  a: Agent,
+  lane: number,
+): { ahead: number; behind: number; follower: Agent | null } {
+  const half = VEHICLE_SPECS[a.kind].lengthPx / 2;
+  let ahead = Number.POSITIVE_INFINITY;
+  let behind = Number.POSITIVE_INFINITY;
+  let follower: Agent | null = null;
+  const consider = (d: number, otherHalf: number, who: Agent | null) => {
+    const gap = Math.abs(d) - half - otherHalf;
+    if (d >= 0) ahead = Math.min(ahead, gap);
+    else if (gap < behind) {
+      behind = gap;
+      follower = who;
+    }
+  };
+  for (const b of w.agents) {
+    if (b === a || b.dir !== a.dir || !occupies(w, b, lane)) continue;
+    consider(aheadOf(a, b.x), VEHICLE_SPECS[b.kind].lengthPx / 2, b);
+  }
+  if (a.dir > 0 && playerLane(w) === lane) consider(aheadOf(a, w.player.x), VEHICLE_SPECS.car.lengthPx / 2, null);
+  return { ahead, behind, follower };
+}
+
+/** Free road in `lane` beyond position x (along a's heading), up to the next vehicle going a's way. */
+function roomAhead(w: World, a: Agent, lane: number, x: number): number {
+  const from = aheadOf(a, x);
+  let room = Number.POSITIVE_INFINITY;
+  for (const b of w.agents) {
+    if (b === a || b.dir !== a.dir || !occupies(w, b, lane)) continue;
+    const d = aheadOf(a, b.x) - from;
+    if (d > 1) room = Math.min(room, d - VEHICLE_SPECS[b.kind].lengthPx / 2);
+  }
+  if (a.dir > 0 && playerLane(w) === lane) {
+    const d = aheadOf(a, w.player.x) - from;
+    if (d > 1) room = Math.min(room, d - VEHICLE_SPECS.car.lengthPx / 2);
+  }
+  return room;
+}
+
+/**
+ * Overtaking on a keep-left road: the only way past is through the oncoming lane.
+ * Drivers pull out only when the whole pass fits before anything coming arrives, and
+ * pull back in as soon as there is room — or at once, cutting in, if something is
+ * closing fast. The cut-in on the way back is where the surprises come from.
+ */
+function passOnTwoWay(w: World, a: Agent): void {
+  const p = w.profile;
+  const rng = w.rng;
+  const spec = VEHICLE_SPECS[a.kind];
+  const home = homeLane(w.road, a.dir);
+  const passLane = home + a.dir;
+  if (passLane < 0 || passLane >= w.road.laneCount) return;
+
+  if (a.targetLane !== home) {
+    // Out in the oncoming lane. Checked every step: a closing vehicle cannot wait 0.3s.
+    const on = oncomingIn(w, a, a.targetLane);
+    const ttc = on ? on.gap / Math.max(a.speed + on.speed, 1) : Number.POSITIVE_INFINITY;
+    // Stopped nose to nose with something is urgent too: nobody else can move first.
+    const faceOff = on !== null && on.gap < FACE_OFF_PX && a.speed < 5;
+    const urgent = ttc < ABORT_TTC_SEC || faceOff;
+    if (!urgent && w.time < a.nextOvertakeCheckAt) return;
+    a.nextOvertakeCheckAt = w.time + OVERTAKE_CHECK_SEC;
+
+    const g = sameWayGap(w, a, home);
+    const aheadNeed = urgent ? 0 : p.followingDistance.mean;
+    const rearNeed = urgent
+      ? 0
+      : (rng() < p.cutInAggression ? p.minFollowingDistancePx : p.followingDistance.mean) +
+        closingAllowance(p, a, g.follower);
+    if (g.ahead < aheadNeed || g.behind < rearNeed) return;
+
+    a.targetLane = home;
+    w.counters.laneChanges++;
+    if (urgent) w.counters.passesAborted++;
+    if (Math.min(g.ahead, g.behind) < spec.lengthPx) w.counters.subLengthGapAccepts++;
+    if (g.follower && g.behind < p.followingDistance.mean) {
+      w.counters.cutIns++;
+      if (rng() > p.yieldProbability) g.follower.ignoreLeaderUntil = w.time + 0.6;
+    }
+    return;
+  }
+
+  if (w.time < a.nextOvertakeCheckAt) return;
+  a.nextOvertakeCheckAt = w.time + OVERTAKE_CHECK_SEC;
+  if (a.lane !== home || w.time < a.straddleUntil) return;
+
+  const lead = leaderOf(w, a);
+  // Never pull out round something that is itself driving at us.
+  if (!lead || lead.speed < 0) return;
+  const leadGap = aheadOf(a, lead.x) - spec.lengthPx / 2 - lead.halfLength;
+  const blocked = lead.speed < a.desiredSpeed * 0.92 && leadGap < p.followingDistance.mean * 3;
+  if (!blocked || rng() >= p.overtakeUrgency * OVERTAKE_CHECK_SEC) return;
+
+  // How far the pass carries us relative to the leader: close the gap, clear its
+  // length and our own, and leave room to pull back in ahead of it.
+  const gain = a.desiredSpeed - lead.speed;
+  if (gain < PASS_MIN_GAIN_PX) return;
+  const passPx = leadGap + lead.halfLength * 2 + spec.lengthPx + p.followingDistance.mean * 2;
+  const passSec = passPx / gain;
+  if (passSec > PASS_MAX_SEC) return;
+
+  const g = sameWayGap(w, a, passLane);
+  if (g.ahead < passPx || g.behind < p.followingDistance.mean) return;
+  // Only pass what there is room to pull in ahead of. Passing one vehicle in a queue
+  // leaves nowhere to go but further down the oncoming lane.
+  if (roomAhead(w, a, home, lead.x) < spec.lengthPx + p.followingDistance.mean * 2) return;
+  const on = oncomingIn(w, a, passLane);
+  if (on && on.gap < (a.desiredSpeed + on.speed) * passSec * PASS_SAFETY + PASS_MARGIN_PX) return;
+
+  a.targetLane = passLane;
+  w.counters.laneChanges++;
+  w.counters.passes++;
+}
+
+/** Oncoming high beams within this distance ahead see the player flash. */
+export const FLASH_RANGE_PX = 2400;
+/** Not everyone dips when flashed. */
+export const DIP_PROBABILITY = 0.7;
+
+/**
+ * The player flashes their headlights. Each oncoming driver ahead with high beams on
+ * dips them, or does not. Returns how many did each.
+ */
+export function flashHeadlights(w: World): { dipped: number; ignored: number } {
+  let dipped = 0;
+  let ignored = 0;
+  for (const a of w.agents) {
+    if (a.dir > 0 || !a.highBeam) continue;
+    const d = a.x - w.player.x;
+    if (d <= 0 || d > FLASH_RANGE_PX) continue;
+    if (w.rng() < DIP_PROBABILITY) {
+      a.highBeam = false;
+      dipped++;
+    } else {
+      ignored++;
+    }
+  }
+  return { dipped, ignored };
+}
+
+/**
  * The lane the player occupies, or null when the player is clear of the carriageway.
  * A player on the verge is not an obstacle — that is the whole point of the verge.
  */
@@ -575,17 +844,29 @@ export function playerLane(w: World): number | null {
 /** The vehicle a given agent is following, or null if the lane ahead is clear. */
 export function leaderOf(w: World, a: Agent): Obstacle | null {
   let best: Obstacle | null = null;
+  // Nearest by the obstacle's NEAR END, not its centre. By centre, a pedestrian level
+  // with the middle of a stopped bus hid the bus's rear bumper, and the vehicle behind
+  // drove 25px into it.
+  let bestD = Number.POSITIVE_INFINITY;
   for (const b of w.agents) {
     // A vehicle mid-change occupies both lanes, so it must be seen from both.
-    if (b === a || b.x <= a.x) continue;
+    if (b === a) continue;
+    const d = aheadOf(a, b.x);
+    const half = VEHICLE_SPECS[b.kind].lengthPx / 2;
+    if (d <= 0 || d - half >= bestD) continue;
     if (!(occupies(w, b, a.lane) || occupies(w, b, a.targetLane))) continue;
-    if (!best || b.x < best.x) best = { x: b.x, speed: b.speed, halfLength: VEHICLE_SPECS[b.kind].lengthPx / 2 };
+    // Oncoming traffic closes rather than leads: its speed counts against ours.
+    best = { x: b.x, speed: b.dir === a.dir ? b.speed : -b.speed, halfLength: half };
+    bestD = d - half;
   }
   // The player occupies a lane too. Without this, traffic drives straight through
   // the player and HANDOFF A3 ("AI reacts to the player") is silently unmet.
   const pLane = playerLane(w);
-  if (pLane !== null && occupies(w, a, pLane) && w.player.x > a.x && (!best || w.player.x < best.x)) {
-    best = { x: w.player.x, speed: w.player.speed, halfLength: VEHICLE_SPECS.car.lengthPx / 2 };
+  const pD = aheadOf(a, w.player.x);
+  const pHalf = VEHICLE_SPECS.car.lengthPx / 2;
+  if (pLane !== null && occupies(w, a, pLane) && pD > 0 && pD - pHalf < bestD) {
+    best = { x: w.player.x, speed: w.player.speed * a.dir, halfLength: pHalf };
+    bestD = pD - pHalf;
   }
 
   // Pedestrians standing on the carriageway. Without this they are pure decoration
@@ -596,9 +877,11 @@ export function leaderOf(w: World, a: Agent): Obstacle | null {
   // over — measured at 30px of penetration. Drivers watch the kerb, not the bumper.
   const halfW = VEHICLE_SPECS[a.kind].widthPx / 2 + PED_LOOKOUT_PX;
   for (const ped of w.pedestrians) {
-    if (ped.x <= a.x) continue;
+    const d = aheadOf(a, ped.x);
+    if (d <= 0 || d - PED_RADIUS_PX >= bestD) continue;
     if (Math.abs(ped.y - a.y) > halfW + PED_RADIUS_PX) continue;
-    if (!best || ped.x < best.x) best = { x: ped.x, speed: 0, halfLength: PED_RADIUS_PX };
+    best = { x: ped.x, speed: 0, halfLength: PED_RADIUS_PX };
+    bestD = d - PED_RADIUS_PX;
   }
   return best;
 }
@@ -634,7 +917,7 @@ function followAndMove(w: World, dt: number): void {
     // A driver who refused to yield to a cut-in has not reacted yet.
     const lead = w.time < a.ignoreLeaderUntil ? null : leaderOf(w, a);
     if (lead) {
-      const gap = lead.x - a.x - spec.lengthPx / 2 - lead.halfLength;
+      const gap = aheadOf(a, lead.x) - spec.lengthPx / 2 - lead.halfLength;
       const dv = v - lead.speed; // positive = closing
       const sStar =
         p.minFollowingDistancePx + Math.max(0, v * T + (v * dv) / (2 * Math.sqrt(aMax * b)));
@@ -652,13 +935,13 @@ function followAndMove(w: World, dt: number): void {
     let step = a.speed * dt;
     if (next) {
       const clearance =
-        next.x - a.x - spec.lengthPx / 2 - next.halfLength - 1;
+        aheadOf(a, next.x) - spec.lengthPx / 2 - next.halfLength - 1;
       if (step > clearance) {
         step = Math.max(0, clearance);
         a.speed = Math.min(a.speed, Math.max(0, next.speed));
       }
     }
-    a.x += step;
+    a.x += step * a.dir;
   }
 }
 

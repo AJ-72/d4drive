@@ -68,14 +68,14 @@ describe('autopilot', () => {
 describe('gearbox', () => {
   it('shifts up with speed and keeps revs in a sane band', () => {
     let lastGear = 1;
-    for (let k = 0; k <= 105; k += 1) {
+    for (let k = 0; k <= 150; k += 1) {
       const { gear, rpm } = gearbox(k);
       expect(gear).toBeGreaterThanOrEqual(lastGear);
       expect(rpm).toBeGreaterThanOrEqual(800);
       expect(rpm).toBeLessThanOrEqual(6200);
       lastGear = gear;
     }
-    expect(lastGear).toBe(5);
+    expect(lastGear).toBe(6);
   });
 });
 
@@ -83,6 +83,8 @@ function fakeAgent() {
   return {
     id: 999,
     kind: 'car' as const,
+    dir: 1 as const,
+    highBeam: false,
     x: 0,
     y: 0,
     speed: 0,

@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { VEHICLE_SPECS, type VehicleKind } from '../profiles/types';
 import type { Road } from '../road/road';
-import type { Agent, Pedestrian, World } from '../sim/world';
-import { m, sceneZ } from './units';
+import { SIM_MARGIN_PX, type Agent, type Pedestrian, type World } from '../sim/world';
+import { lerp, m, sceneZ, smoothstep } from './units';
 
 // Mirrors the sim's agents and pedestrians as 3D meshes. Read-only with respect to
 // the sim: it never writes to an Agent, so the traffic AI behaves exactly as in
@@ -27,7 +27,14 @@ export const LAMPS = {
   head: new THREE.MeshStandardMaterial({ color: '#fffbe8', emissive: '#fff1c4', emissiveIntensity: 0.2 }),
   tail: new THREE.MeshStandardMaterial({ color: '#5a0d0d', emissive: '#ff2a1a', emissiveIntensity: 0.3 }),
   brake: new THREE.MeshStandardMaterial({ color: '#8a1010', emissive: '#ff2a1a', emissiveIntensity: 3 }),
+  /** Oncoming high beams: bright enough after dark to bloom across the screen. */
+  high: new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#fff6de', emissiveIntensity: 0.4 }),
 };
+
+// Traffic enters and leaves at the edge of the sim window. Fade it in and out of the
+// haze well inside that edge, so no vehicle ever appears or vanishes in plain view.
+const FADE_FAR_M = m(SIM_MARGIN_PX) - 5;
+const FADE_NEAR_M = FADE_FAR_M - 45;
 const GLASS = mat('#1c2a36', { roughness: 0.15, metalness: 0.4 });
 const TYRE = mat('#1a1a1c', { roughness: 0.9 });
 const SKIN = ['#8d5a3b', '#6b4127', '#b07a52', '#c99a74', '#e4c1a1'];
@@ -74,6 +81,11 @@ interface Built {
   wheels: THREE.Mesh[];
   wheelR: number;
   tails: THREE.Mesh[];
+  heads: THREE.Mesh[];
+  /** Every mesh, with the material it shows when fully faded in. */
+  meshes: { mesh: THREE.Mesh; base: THREE.Material }[];
+  /** Per-mesh transparent copies, used only while fading. Shared materials stay opaque. */
+  fades: Map<THREE.Mesh, THREE.MeshStandardMaterial>;
 }
 
 const CAR_COLOURS = ['#e9ecef', '#b9bec4', '#c0392b', '#2e5c8a', '#1d1f22', '#7b2d3b', '#d4a13a', '#3f7d5a'];
@@ -86,6 +98,7 @@ function build(kind: VehicleKind, id: number): Built {
   const g = new THREE.Group();
   const wheels: THREE.Mesh[] = [];
   const tails: THREE.Mesh[] = [];
+  const heads: THREE.Mesh[] = [];
   const pick = <T,>(arr: readonly T[]): T => arr[id % arr.length]!;
   let wheelR = 0.34;
 
@@ -96,7 +109,7 @@ function build(kind: VehicleKind, id: number): Built {
     box(g, paint, L * 0.46, 0.08, W * 0.84, -0.18, 1.5, 0);
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) wheels.push(wheel(g, 0.34, 0.24, sx * L * 0.32, sz * W * 0.42));
     for (const sz of [-1, 1]) {
-      box(g, LAMPS.head, 0.06, 0.14, 0.34, L / 2, 0.72, sz * W * 0.3);
+      heads.push(box(g, LAMPS.head, 0.06, 0.14, 0.34, L / 2, 0.72, sz * W * 0.3));
       tails.push(box(g, LAMPS.tail, 0.06, 0.14, 0.34, -L / 2, 0.75, sz * W * 0.3));
     }
   } else if (kind === 'auto') {
@@ -112,7 +125,7 @@ function build(kind: VehicleKind, id: number): Built {
     box(g, yellow, 0.05, 0.9, W * 0.94, -L * 0.45, 1.4, 0);
     wheels.push(wheel(g, 0.28, 0.16, L * 0.36, 0));
     for (const sz of [-1, 1]) wheels.push(wheel(g, 0.28, 0.16, -L * 0.3, sz * W * 0.4));
-    box(g, LAMPS.head, 0.06, 0.16, 0.2, L * 0.47, 0.95, 0);
+    heads.push(box(g, LAMPS.head, 0.06, 0.16, 0.2, L * 0.47, 0.95, 0));
     for (const sz of [-1, 1]) tails.push(box(g, LAMPS.tail, 0.05, 0.1, 0.16, -L * 0.45, 0.6, sz * W * 0.32));
     rider(g, L * 0.1, 0.7, pick(SHIRTS), null, pick(SKIN));
     wheelR = 0.28;
@@ -128,7 +141,7 @@ function build(kind: VehicleKind, id: number): Built {
     box(g, mat('#1a1a1a', { emissive: '#ffb000', emissiveIntensity: 1.2 }), 0.06, 0.28, W * 0.6, L / 2 + 0.01, 2.8, 0);
     for (const x of [L * 0.35, -L * 0.25, -L * 0.38]) for (const sz of [-1, 1]) wheels.push(wheel(g, 0.5, 0.3, x, sz * W * 0.42));
     for (const sz of [-1, 1]) {
-      box(g, LAMPS.head, 0.06, 0.2, 0.36, L / 2, 0.8, sz * W * 0.34);
+      heads.push(box(g, LAMPS.head, 0.06, 0.2, 0.36, L / 2, 0.8, sz * W * 0.34));
       tails.push(box(g, LAMPS.tail, 0.06, 0.26, 0.26, -L / 2, 0.9, sz * W * 0.38));
     }
     wheelR = 0.5;
@@ -138,19 +151,60 @@ function build(kind: VehicleKind, id: number): Built {
     box(g, paint, L * 0.3, 0.3, W * 0.4, L * 0.05, 0.95, 0);
     box(g, mat('#2b2b2b'), 0.08, 0.5, W * 0.9, L * 0.32, 1.05, 0);
     for (const x of [L * 0.34, -L * 0.34]) wheels.push(wheel(g, 0.33, 0.1, x, 0));
-    box(g, LAMPS.head, 0.06, 0.14, 0.14, L * 0.4, 1.0, 0);
+    heads.push(box(g, LAMPS.head, 0.06, 0.14, 0.14, L * 0.4, 1.0, 0));
     tails.push(box(g, LAMPS.tail, 0.05, 0.08, 0.14, -L * 0.42, 0.9, 0));
     rider(g, -L * 0.05, 0.95, pick(SHIRTS), pick(['#f5f6fa', '#1d1f22', '#eb3b5a', '#f7b731']), pick(SKIN));
     wheelR = 0.33;
   }
-  return { group: g, wheels, wheelR, tails };
+  // Roll about the vehicle's own length axis, after the yaw: a bike leans into its
+  // turn whichever way it is facing.
+  g.rotation.order = 'YXZ';
+  const meshes: Built['meshes'] = [];
+  g.traverse((o) => {
+    if (o instanceof THREE.Mesh) meshes.push({ mesh: o, base: o.material as THREE.Material });
+  });
+  return { group: g, wheels, wheelR, tails, heads, meshes, fades: new Map() };
+}
+
+/** Show a vehicle at `opacity`, swapping to private transparent copies only while < 1. */
+function applyOpacity(b: Built, opacity: number): void {
+  b.group.visible = opacity > 0.01;
+  const fading = opacity < 0.995;
+  for (const entry of b.meshes) {
+    // Lamps swap between shared materials (tail/brake, head/high), so read it live.
+    if (b.tails.includes(entry.mesh) || b.heads.includes(entry.mesh)) {
+      entry.base = (entry.mesh.userData['lamp'] as THREE.Material | undefined) ?? entry.base;
+    }
+    if (!fading) {
+      entry.mesh.material = entry.base;
+      entry.mesh.castShadow = true;
+      continue;
+    }
+    let f = b.fades.get(entry.mesh);
+    if (!f) {
+      f = (entry.base as THREE.MeshStandardMaterial).clone();
+      b.fades.set(entry.mesh, f);
+    }
+    // Copied every frame: lamp brightness follows the time of day.
+    f.copy(entry.base as THREE.MeshStandardMaterial);
+    f.transparent = true;
+    f.opacity = opacity;
+    entry.mesh.material = f;
+    entry.mesh.castShadow = false;
+  }
 }
 
 interface Tracked {
   built: Built;
   kind: VehicleKind;
-  lastY: number;
+  dir: 1 | -1;
+  /** Sim position at the previous and the latest step, for interpolating frames. */
+  prevX: number;
+  prevY: number;
+  x: number;
+  y: number;
   lastSpeed: number;
+  /** Heading relative to the direction of travel. */
   yaw: number;
   seen: boolean;
 }
@@ -178,6 +232,24 @@ export class Traffic3D {
   setNight(night: number): void {
     LAMPS.head.emissiveIntensity = 0.2 + night * 4;
     LAMPS.tail.emissiveIntensity = 0.3 + night * 1.5;
+    LAMPS.high.emissiveIntensity = 0.4 + night * 40;
+  }
+
+  /**
+   * Place every vehicle for this frame. The sim steps at a fixed 60 Hz while the
+   * screen refreshes at its own rate; drawing the last step's position as-is made
+   * traffic judder. `alpha` is how far this frame sits between the last two steps.
+   */
+  render(road: Road, alpha: number, playerXm: number): void {
+    const endM = m(road.lengthPx);
+    for (const t of this.tracked.values()) {
+      const x = m(lerp(t.prevX, t.x, alpha));
+      t.built.group.position.set(x, 0, sceneZ(road, lerp(t.prevY, t.y, alpha)));
+      const far = 1 - smoothstep(FADE_NEAR_M, FADE_FAR_M, Math.abs(x - playerXm));
+      // Traffic also leaves the sim just past the end of the road.
+      const end = 1 - smoothstep(endM, endM + 25, x);
+      applyOpacity(t.built, far * end);
+    }
   }
 
   sync(world: World, dt: number): void {
@@ -208,30 +280,37 @@ export class Traffic3D {
     if (!t) {
       const built = this.pool.get(a.kind)?.pop() ?? build(a.kind, a.id);
       this.root.add(built.group);
-      t = { built, kind: a.kind, lastY: a.y, lastSpeed: a.speed, yaw: 0, seen: true };
+      t = { built, kind: a.kind, dir: a.dir, prevX: a.x, prevY: a.y, x: a.x, y: a.y, lastSpeed: a.speed, yaw: 0, seen: true };
       this.tracked.set(a.id, t);
+      // Placed now, so a vehicle never shows for a frame at a pooled mesh's old spot.
+      built.group.position.set(m(a.x), 0, sceneZ(road, a.y));
     }
     t.seen = true;
+    t.prevX = t.x;
+    t.prevY = t.y;
     const g = t.built.group;
-    g.position.set(m(a.x), 0, sceneZ(road, a.y));
 
-    // Heading from actual motion, so weaving and cut-ins read as steering.
+    // Heading from actual motion, so weaving and cut-ins read as steering. Eased
+    // gently: a lane change reads as a steer, not a snap.
     if (dt > 0) {
-      const dz = m(a.y - t.lastY);
+      const dz = m(a.y - t.y);
       const dx = Math.max(m(a.speed) * dt, 1e-3);
-      const target = -Math.atan2(dz, dx);
-      t.yaw += (target - t.yaw) * Math.min(1, dt * 8);
+      const target = -a.dir * Math.atan2(dz, dx);
+      t.yaw += (target - t.yaw) * Math.min(1, dt * 5);
     }
-    g.rotation.y = t.yaw;
+    t.x = a.x;
+    t.y = a.y;
+    // Oncoming traffic faces -x.
+    g.rotation.y = (a.dir < 0 ? Math.PI : 0) + t.yaw;
     if (a.kind === 'bike') g.rotation.x = t.yaw * 1.5; // lean into the turn
 
     const spin = (m(a.speed) * dt) / t.built.wheelR;
     for (const w of t.built.wheels) w.rotation.z -= spin;
 
     const braking = dt > 0 && (a.speed - t.lastSpeed) / dt < -60;
-    for (const tl of t.built.tails) tl.material = braking || a.speed < 5 ? LAMPS.brake : LAMPS.tail;
+    for (const tl of t.built.tails) tl.userData['lamp'] = braking || a.speed < 5 ? LAMPS.brake : LAMPS.tail;
+    for (const hl of t.built.heads) hl.userData['lamp'] = a.highBeam ? LAMPS.high : LAMPS.head;
 
-    t.lastY = a.y;
     t.lastSpeed = a.speed;
   }
 

@@ -111,6 +111,8 @@ export class Hud {
   private readonly achDrawer = el('aside', 'drawer glass');
   private readonly fps = el('div', 'fps glass');
   private readonly flashEl = el('div', 'flash');
+  /** Oncoming high-beam dazzle, drawn over the whole view. */
+  private readonly glareEl = el('div', 'glare');
   private readonly musicBtn: HTMLButtonElement;
   private sliderHeld = false;
   private introCity = 0;
@@ -126,7 +128,7 @@ export class Hud {
     this.introCity = initialCity;
     this.hud.id = 'hud';
     this.hud.classList.add('off');
-    this.root.append(this.hud, this.intro, this.pause, this.finish, this.settingsDrawer, this.helpDrawer, this.achDrawer, this.fps, this.flashEl);
+    this.root.append(this.glareEl, this.hud, this.intro, this.pause, this.finish, this.settingsDrawer, this.helpDrawer, this.achDrawer, this.fps, this.flashEl);
     host.appendChild(this.root);
 
     // --- top bar ---
@@ -228,7 +230,7 @@ export class Hud {
     };
     touch.append(
       cluster(
-        [['cruise', '⏩', 'Cruise (hold the gas)'], ['horn', '📯', 'Horn']],
+        [['cruise', '⏩', 'Cruise (hold the gas)'], ['flash', '💡', 'Flash headlights'], ['horn', '📯', 'Horn']],
         [['left', '◀', 'Steer left'], ['right', '▶', 'Steer right']],
       ),
       cluster(
@@ -412,7 +414,7 @@ export class Hud {
     const c = Number(this.ringVal.dataset['c']);
     this.ringVal.setAttribute('stroke-dashoffset', String(c * (1 - Math.min(1, d.kmh / 110))));
     this.stat['rpm']!.textContent = `${Math.round(d.rpm / 10) * 10}`;
-    this.stat['gear']!.textContent = `${d.gear}/5`;
+    this.stat['gear']!.textContent = `${d.gear}/6`;
     this.stat['dist']!.textContent = `${(d.distM / 1000).toFixed(2)} km`;
     this.stat['time']!.textContent = fmtTime(d.runSec);
     this.fishNum.textContent = String(d.fish);
@@ -450,6 +452,25 @@ export class Hud {
     f.style.top = `${y}px`;
     this.hud.append(f);
     window.setTimeout(() => f.remove(), 950);
+  }
+
+  /**
+   * High-beam glare: a white bloom centred on the oncoming lights, and a wash over
+   * the whole view as it gets worse. `amount` 0..1.
+   */
+  setGlare(amount: number, x: number, y: number): void {
+    const a = Math.max(0, Math.min(1, amount));
+    if (a < 0.01) {
+      if (this.glareEl.style.opacity !== '0') this.glareEl.style.opacity = '0';
+      return;
+    }
+    this.glareEl.style.opacity = '1';
+    this.glareEl.style.background =
+      `radial-gradient(circle at ${x.toFixed(0)}px ${y.toFixed(0)}px, ` +
+      `rgba(255,255,248,${(0.95 * a).toFixed(3)}) 0, ` +
+      `rgba(255,250,232,${(0.75 * a).toFixed(3)}) ${(6 + 14 * a).toFixed(1)}%, ` +
+      `rgba(255,246,220,${(0.45 * a * a).toFixed(3)}) ${(30 + 40 * a).toFixed(1)}%, ` +
+      `rgba(255,246,220,${(0.3 * a * a).toFixed(3)}) 100%)`;
   }
 
   flash(): void {
@@ -506,11 +527,11 @@ export class Hud {
 }
 
 const TOUCH_HTML = `<b>On a phone:</b> turn it sideways for the widest view.<br>
-◀ ▶ steer · ▲ gas · ▼ brake · ⤒ jump · ★ stunt · 📯 horn<br>
+◀ ▶ steer · ▲ gas · ▼ brake · ⤒ jump · ★ stunt · 📯 horn · 💡 flash lights<br>
 ⏩ cruise holds the gas for you, so your right thumb is free to jump.`;
 
 const KEYS_HTML = `<kbd>W</kbd><kbd>S</kbd> accelerate / brake &nbsp; <kbd>A</kbd><kbd>D</kbd> change lane &nbsp; <kbd>Space</kbd> jump &nbsp; <kbd>F</kbd> stunt<br>
-<kbd>B</kbd> horn &nbsp; <kbd>H</kbd> pelican squawk &nbsp; <kbd>C</kbd> camera &nbsp; <kbd>T</kbd> switch city &nbsp; <kbd>N</kbd> skip 3 hours &nbsp; <kbd>P</kbd> pause &nbsp; <kbd>M</kbd> mute`;
+<kbd>B</kbd> horn &nbsp; <kbd>L</kbd> flash lights &nbsp; <kbd>H</kbd> pelican squawk &nbsp; <kbd>C</kbd> camera &nbsp; <kbd>T</kbd> switch city &nbsp; <kbd>N</kbd> skip 3 hours &nbsp; <kbd>P</kbd> pause &nbsp; <kbd>M</kbd> mute`;
 
 export function fmtTime(sec: number): string {
   const s = Math.max(0, sec);

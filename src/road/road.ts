@@ -24,7 +24,10 @@ export interface Road {
 }
 
 export const SPIKE_ROAD: Road = {
-  lengthPx: 12000,
+  // Was 12000. The player's top speed rose from 285 to 417 px/s, and the start moved
+  // to 2600 for the wider sim window; 18000 keeps a full-throttle run on the road for
+  // about the same ~40 s as before, so headless "driving" runs still mostly drive.
+  lengthPx: 18000,
   laneCount: 2,
   laneWidthPx: 90,
   // Every 1500px. Three crossings (3000/6000/9000) left long stretches with none in
@@ -32,7 +35,7 @@ export const SPIKE_ROAD: Road = {
   // point, Singapore simply produced no pedestrians there — 11 against Trivandrum's
   // 29 over the same run. That is a DENSITY difference between the profiles, which
   // C3 explicitly forbids as a way of telling the two cities apart.
-  crossingsPx: [1500, 3000, 4500, 6000, 7500, 9000, 10500],
+  crossingsPx: Array.from({ length: 11 }, (_, i) => (i + 1) * 1500),
   shoulderPx: 26,
 };
 

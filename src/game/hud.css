@@ -138,6 +138,7 @@ kbd { display: inline-block; min-width: 18px; padding: 1px 6px; margin: 0 2px; b
 .fps[hidden] { display: none; }
 
 .flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 6; }
+.glare { position: fixed; inset: 0; opacity: 0; pointer-events: none; mix-blend-mode: screen; } /* first in .d4: under the HUD */
 .flash.go { animation: flash 0.5s ease-out; }
 @keyframes flash { 0% { opacity: 0.8; } 100% { opacity: 0; } }
 

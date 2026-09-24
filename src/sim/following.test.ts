@@ -33,6 +33,10 @@ function minGapOverRun(profile: typeof TRIVANDRUM, seconds: number): number {
         for (let i = 1; i < list.length; i++) {
           const f = list[i]!;
           const r = list[i - 1]!;
+          // Mid-change a vehicle still carries its old lane number while already
+          // beside the one it is pulling out round. Side by side is not "through".
+          const dy = Math.abs(f.y - r.y) - (VEHICLE_SPECS[f.kind].widthPx + VEHICLE_SPECS[r.kind].widthPx) / 2;
+          if (dy >= 0) continue;
           worst = Math.min(
             worst,
             f.x - r.x - (VEHICLE_SPECS[f.kind].lengthPx + VEHICLE_SPECS[r.kind].lengthPx) / 2,

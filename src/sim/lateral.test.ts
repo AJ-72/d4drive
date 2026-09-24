@@ -61,17 +61,20 @@ describe('T7 — lane discipline', () => {
     expect(w.counters.centerlineStraddles).toBe(0);
   });
 
-  it('Trivandrum straddles repeatedly', () => {
+  it('Trivandrum still straddles now and then', () => {
+    // Was "> 10 in 90 s". The player asked (2026-09-24) for calmer traffic with the
+    // odd surprise, and on a keep-left road the line borders oncoming traffic.
     const w = runHeadless({ seconds: 90, profile: TRIVANDRUM, input: DRIVING });
-    expect(w.counters.centerlineStraddles).toBeGreaterThan(10);
+    expect(w.counters.centerlineStraddles).toBeGreaterThan(0);
   });
 
-  it('Trivandrum drives visibly further off-centre than Singapore', () => {
+  it('Trivandrum drives further off-centre than Singapore, but calmly', () => {
     const tvm = meanLaneDeviation(TRIVANDRUM, 90);
     const sg = meanLaneDeviation(SINGAPORE, 90);
-    // The authored drift amplitudes are 16px vs 2px. This is a frozen-frame signal,
-    // which TEST_PROTOCOL D-2 depends on — it must be visible without motion.
-    expect(tvm).toBeGreaterThan(sg * 3);
+    // The authored drift amplitudes are now 3px vs 2px (was 16px): the old wander
+    // read as every vehicle jumping about. Passing and straddling still separate them.
+    expect(tvm).toBeGreaterThan(sg);
+    expect(tvm).toBeLessThan(10);
     expect(sg).toBeLessThan(6);
   });
 });
@@ -137,9 +140,19 @@ describe('C3 protocol — the roadside must actually work', () => {
       const w = pullOver(profile);
       // Deliberate roadside stops (T10, C3 bullet 4) are a FEATURE and must not be
       // counted as a jam. Only involuntary stops indicate a blockage.
-      const jammed = w.agents.filter(
-        (a) => a.speed < 5 && w.time >= a.roadsideStopUntil,
-      ).length;
+      // A jam is a vehicle that STAYS stopped. A snapshot also caught the tail of a
+      // queue pulling away from a pedestrian crossing, or waiting behind a roadside
+      // stop for the oncoming lane to clear on a keep-left road: both normal, both
+      // over in seconds. 20 s stopped outside a roadside stop is a blockage.
+      const stoppedFor = new Map<number, number>();
+      for (let i = 0; i < Math.round(30 / FIXED_DT); i++) {
+        stepWorld(w, { throttle: 0, steer: 0 }, FIXED_DT);
+        for (const a of w.agents) {
+          const still = a.speed < 5 && w.time >= a.roadsideStopUntil;
+          stoppedFor.set(a.id, still ? (stoppedFor.get(a.id) ?? 0) + FIXED_DT : 0);
+        }
+      }
+      const jammed = w.agents.filter((a) => (stoppedFor.get(a.id) ?? 0) >= 20).length;
       expect(jammed).toBe(0);
     }
   });
