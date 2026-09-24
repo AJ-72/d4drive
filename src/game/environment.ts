@@ -58,15 +58,21 @@ export class Environment {
     u['rayleigh']!.value = 1.6;
     u['mieCoefficient']!.value = 0.006;
     u['mieDirectionalG']!.value = 0.86;
+    // Brightness of the scattered light, set per frame from the sun's height. A fixed
+    // 0.02 suits dawn and dusk, but at midday it drove every channel into the 0.92
+    // clamp, and the whole sky read as flat white-grey haze.
+    u['uSkyGain'] = { value: 0.02 };
     // The stock sky writes raw HDR, far over 1.0 across the whole halo round the sun.
     // With bloom on, that smeared over the frame and whited out every sea-facing view.
     // Keep the scattered light just under the bloom threshold (1.0) and give only the
     // sun disc headroom, so the disc glows and the sky around it does not.
     const mat = this.sky.material;
-    mat.fragmentShader = mat.fragmentShader.replace(
-      'vec3 texColor = ( Lin + L0 ) * 0.04 + sundiscColor + vec3( 0.0, 0.0003, 0.00075 );',
-      'vec3 texColor = min( ( Lin + L0 ) * 0.02, vec3( 0.92 ) ) + min( sundiscColor * 0.002, vec3( 4.0 ) ) + vec3( 0.0, 0.0003, 0.00075 );',
-    );
+    mat.fragmentShader =
+      'uniform float uSkyGain;\n' +
+      mat.fragmentShader.replace(
+        'vec3 texColor = ( Lin + L0 ) * 0.04 + sundiscColor + vec3( 0.0, 0.0003, 0.00075 );',
+        'vec3 texColor = min( ( Lin + L0 ) * uSkyGain, vec3( 0.92 ) ) + min( sundiscColor * 0.002, vec3( 4.0 ) ) + vec3( 0.0, 0.0003, 0.00075 );',
+      );
     if (!mat.fragmentShader.includes('vec3( 0.92 )')) throw new Error('Sky shader changed; HDR clamp not applied');
     scene.add(this.sky);
 
@@ -137,12 +143,15 @@ export class Environment {
 
     const u = this.sky.material.uniforms;
     (u['sunPosition']!.value as THREE.Vector3).copy(dir);
+    u['uSkyGain']!.value = lerp(0.02, 0.006, smoothstep(0.05, 0.6, e));
     this.sky.position.copy(camera.position);
 
     ramp(HORIZON, e, this.horizon);
     this.zenith.copy(this.horizon).lerp(new THREE.Color('#0d1a3a'), 0.5 + this.night * 0.3);
     this.fog.color.copy(this.horizon);
-    this.fog.density = lerp(0.0022, 0.0034, this.night);
+    // Light haze by day, so the far road stays sharp; denser after dark. Traffic still
+    // fades in at 190-235 m, where even this haze softens it.
+    this.fog.density = lerp(0.0015, 0.003, this.night);
 
     // One directional light: the sun by day, the moon by night. Two would cost a
     // second shadow map for a moon nobody looks at.

@@ -252,9 +252,11 @@ export class Traffic3D {
   }
 
   setNight(night: number): void {
-    LAMPS.head.emissiveIntensity = 0.2 + night * 4;
+    // Dipped lights stay modest; high beams stand out after dark without a huge halo.
+    // At 40 the bloom from each high beam covered much of the screen.
+    LAMPS.head.emissiveIntensity = 0.15 + night * 2.5;
     LAMPS.tail.emissiveIntensity = 0.3 + night * 1.5;
-    LAMPS.high.emissiveIntensity = 0.4 + night * 40;
+    LAMPS.high.emissiveIntensity = 0.2 + night * 9;
   }
 
   /**
