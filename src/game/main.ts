@@ -109,6 +109,8 @@ orbit.enabled = false;
 let world: World = freshWorld();
 let started = false;
 let paused = false;
+/** Set while the menu holds the game paused. */
+let menuPaused = false;
 let runSec = 0;
 let runFish = 0;
 let runCrashes = 0;
@@ -173,6 +175,18 @@ const hud = new Hud(
       hourTarget = null;
     },
     togglePause: () => togglePause(),
+    menu(open) {
+      // The menu pauses the game without the pause card, and resumes only a pause
+      // it caused itself.
+      if (open && started && !finished && !paused) {
+        paused = true;
+        menuPaused = true;
+        audio.drive(850, 0, 0, simTime);
+      } else if (!open && menuPaused) {
+        paused = false;
+        menuPaused = false;
+      }
+    },
     screenshot: () => (screenshotPending = true),
     toggleMusic() {
       settings.music = !settings.music;
@@ -234,6 +248,7 @@ function setCamera(mode: CameraMode): void {
 function togglePause(): void {
   if (!started || finished) return;
   paused = !paused;
+  menuPaused = false;
   hud.setPaused(paused);
   if (paused) audio.drive(850, 0, 0, simTime);
 }
