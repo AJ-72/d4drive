@@ -208,16 +208,34 @@ export class Hud {
     panel.append(r1, r2);
 
     // --- touch controls (shown on coarse pointers only) ---
+    // Left thumb steers; right thumb drives. Cruise holds the gas so the right thumb
+    // is free for jump and stunt, which otherwise would mean letting off the gas.
     const touch = el('div', 'touch');
-    const left = el('div');
-    const right = el('div');
-    for (const [id, label, side] of [['left', '◀', left], ['right', '▶', left], ['jump', '⤒', right], ['brake', '▼', right], ['gas', '▲', right]] as const) {
-      const b = el('button', '', label);
-      b.setAttribute('aria-label', id);
-      this.touchButtons.set(id, b);
-      side.append(b);
-    }
-    touch.append(left, right);
+    const cluster = (extras: [string, string, string][], main: [string, string, string][]) => {
+      const c = el('div', 'cluster');
+      const top = el('div', 'extras');
+      const bottom = el('div', 'main');
+      for (const [row, list] of [[top, extras], [bottom, main]] as const) {
+        for (const [id, label, name] of list) {
+          const b = el('button', `t-${id}`, label);
+          b.setAttribute('aria-label', name);
+          this.touchButtons.set(id, b);
+          row.append(b);
+        }
+      }
+      c.append(top, bottom);
+      return c;
+    };
+    touch.append(
+      cluster(
+        [['cruise', '⏩', 'Cruise (hold the gas)'], ['horn', '📯', 'Horn']],
+        [['left', '◀', 'Steer left'], ['right', '▶', 'Steer right']],
+      ),
+      cluster(
+        [['stunt', '★', 'Stunt'], ['jump', '⤒', 'Jump']],
+        [['brake', '▼', 'Brake'], ['gas', '▲', 'Accelerate']],
+      ),
+    );
 
     this.hint.innerHTML = '🐟 Fish ahead <span class="arr">➜</span>';
     this.hud.append(badge, cams, tools, this.toasts, this.hint, gauge, panel, touch);
@@ -274,7 +292,7 @@ export class Hud {
     mute.onclick = () => this.cb.start(true, this.introCity);
     cta.append(go, mute);
     const keys = el('div', 'keys', KEYS_HTML);
-    card.append(chips, pick, cta, keys);
+    card.append(chips, pick, cta, keys, el('div', 'touch-help', TOUCH_HTML));
     this.intro.append(card);
   }
 
@@ -288,7 +306,7 @@ export class Hud {
   }
 
   private buildHelp(): void {
-    this.helpDrawer.innerHTML = `<h3>How to play</h3><div class="keys" style="display:block;text-align:left">${KEYS_HTML}</div>
+    this.helpDrawer.innerHTML = `<h3>How to play</h3><div class="touch-help" style="text-align:left">${TOUCH_HTML}</div><div class="keys" style="display:block;text-align:left">${KEYS_HTML}</div>
       <p style="font-size:12.5px;color:var(--muted);line-height:1.5">Drive the 6 km sea front to the finish arch. Traffic follows the
       city's driving culture — press <kbd>T</kbd> to feel the difference. Bumping into traffic slows you down. Click the pelican or
       the sea for a surprise.</p>`;
@@ -374,6 +392,10 @@ export class Hud {
   setCamera(mode: CameraMode): void {
     for (const [id, b] of this.camButtons) b.classList.toggle('on', id === mode);
     this.stat['cam']!.textContent = CAMERA_MODES.find((c) => c.id === mode)!.label;
+  }
+
+  setCruise(on: boolean): void {
+    this.touchButtons.get('cruise')?.classList.toggle('on', on);
   }
 
   setMusic(on: boolean): void {
@@ -482,6 +504,10 @@ export class Hud {
     this.finish.hidden = true;
   }
 }
+
+const TOUCH_HTML = `<b>On a phone:</b> turn it sideways for the widest view.<br>
+◀ ▶ steer · ▲ gas · ▼ brake · ⤒ jump · ★ stunt · 📯 horn<br>
+⏩ cruise holds the gas for you, so your right thumb is free to jump.`;
 
 const KEYS_HTML = `<kbd>W</kbd><kbd>S</kbd> accelerate / brake &nbsp; <kbd>A</kbd><kbd>D</kbd> change lane &nbsp; <kbd>Space</kbd> jump &nbsp; <kbd>F</kbd> stunt<br>
 <kbd>B</kbd> horn &nbsp; <kbd>H</kbd> pelican squawk &nbsp; <kbd>C</kbd> camera &nbsp; <kbd>T</kbd> switch city &nbsp; <kbd>N</kbd> skip 3 hours &nbsp; <kbd>P</kbd> pause &nbsp; <kbd>M</kbd> mute`;

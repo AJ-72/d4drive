@@ -253,20 +253,41 @@ window.addEventListener('resize', resize);
 
 // ---------- input ----------
 const keyboard = createKeyboardInput(window);
-const touch = { gas: false, brake: false, left: false, right: false };
+const touch = { gas: false, brake: false, left: false, right: false, cruise: false };
+// Tap actions fire once on press; held controls stay down until the finger lifts.
+const TAP: Record<string, () => void> = {
+  jump: () => void jump(),
+  stunt: () => stunt(),
+  horn: () => honk(),
+  cruise: () => {
+    touch.cruise = !touch.cruise;
+    hud.setCruise(touch.cruise);
+    if (started) hud.toast('⏩', touch.cruise ? 'Cruise on' : 'Cruise off', touch.cruise ? 'Gas held for you · ▼ still brakes' : '');
+  },
+};
 for (const [id, b] of hud.touchButtons) {
   const set = (v: boolean) => {
-    if (id === 'jump') {
-      if (v) jump();
+    b.classList.toggle('held', v);
+    const tap = TAP[id];
+    if (tap) {
+      if (v) tap();
       return;
     }
-    touch[id as keyof typeof touch] = v;
+    touch[id as 'gas' | 'brake' | 'left' | 'right'] = v;
   };
   b.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     set(true);
   });
   for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(ev, () => set(false));
+  // A long press would otherwise open the browser's context menu mid-drive.
+  b.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+function honk(): void {
+  if (!started) return;
+  audio.horn();
+  stats.horns++;
 }
 
 function jump(): boolean {
@@ -307,9 +328,7 @@ window.addEventListener('keydown', (e) => {
       stunt();
       break;
     case 'KeyB':
-      if (!started) break;
-      audio.horn();
-      stats.horns++;
+      honk();
       break;
     case 'KeyH':
       if (started) squawk();
@@ -379,7 +398,11 @@ renderer.domElement.addEventListener('pointerup', (e) => {
 function sampleInput(): InputState & { jump: boolean } {
   const k = keyboard.sample();
   const manual = {
-    throttle: Math.max(-1, Math.min(1, k.throttle + (touch.gas ? 1 : 0) - (touch.brake ? 1 : 0))),
+    // Braking always wins over cruise, so the brake button still works with it on.
+    // The touch brake stops the car; it does not reverse (the sim reverses on a held -1).
+    throttle: touch.brake
+      ? world.player.speed > 0.5 ? -1 : 0
+      : Math.max(-1, Math.min(1, k.throttle + (touch.gas || touch.cruise ? 1 : 0))),
     steer: Math.max(-1, Math.min(1, k.steer + (touch.right ? 1 : 0) - (touch.left ? 1 : 0))),
   };
   // Parked at the finish: brake to a stop, but never into reverse (the sim reverses on -1).
