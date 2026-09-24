@@ -16,7 +16,8 @@ html, body { background: #0b0d14; }
 #app canvas.game { width: 100% !important; height: 100% !important; max-width: none; max-height: none; }
 
 .d4 { font-family: var(--font); color: var(--text); user-select: none; -webkit-user-select: none; }
-.d4 button { font-family: inherit; color: inherit; cursor: pointer; border: 0; background: none; }
+/* :where keeps this reset weaker than .glass, which was silently losing its background. */
+.d4 :where(button) { font-family: inherit; color: inherit; cursor: pointer; border: 0; background: none; }
 .glass {
   background: var(--glass);
   border: 1px solid var(--line);
@@ -30,24 +31,23 @@ html, body { background: #0b0d14; }
 #hud.off { opacity: 0; }
 #hud > * { pointer-events: auto; }
 
-.badge { position: absolute; top: 14px; left: 14px; display: flex; gap: 10px; align-items: center; padding: 9px 16px 9px 10px; }
-.badge .logo { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; font-size: 20px; background: linear-gradient(135deg, #ff5a4e, #ffb347); }
-.badge b { display: block; font-size: 15px; letter-spacing: 0.02em; }
-.badge small { color: var(--muted); font-size: 11.5px; }
+/* Top bar: menu, camera, speed, fish. Nothing else competes with the road. */
+.topbar { position: absolute; top: max(10px, env(safe-area-inset-top)); left: 10px; right: 10px; display: flex; align-items: center; gap: 8px; pointer-events: none !important; }
+.topbar > * { pointer-events: auto; }
+/* Darker than the usual glass: it sits over bright sky. */
+.topbar .glass, .touch .more { background: var(--glass-strong); }
+.ico-btn { width: 46px; height: 46px; border-radius: 14px; font-size: 20px; flex: none; }
+.cam-btn { height: 46px; padding: 0 14px; border-radius: 14px; font-size: 13.5px; white-space: nowrap; flex: none; }
+.cam-btn span { color: var(--muted); }
+.speed-top { margin-left: auto; margin-right: 4px; display: flex; align-items: baseline; gap: 4px; text-shadow: 0 2px 10px rgba(0, 0, 0, 0.55); }
+.speed-top b { font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
+.speed-top small { font-size: 12px; color: var(--muted); }
+.fish-chip { height: 46px; padding: 0 14px; border-radius: 14px; display: flex; align-items: center; gap: 6px; font-size: 20px; flex: none; }
+.fish-chip .fishcount { font-size: 22px; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
 
-.cams { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 2px; padding: 4px; }
-.cams button { padding: 6px 13px; border-radius: 11px; font-size: 12.5px; color: var(--muted); transition: background 0.2s, color 0.2s; white-space: nowrap; }
-.cams button:hover { color: var(--text); }
-.cams button.on { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #2b1606; font-weight: 700; }
-
-.tools { position: absolute; top: 14px; right: 14px; display: flex; gap: 2px; padding: 4px; }
-.tools button { width: 34px; height: 34px; border-radius: 10px; font-size: 15px; transition: background 0.2s; }
-.tools button:hover { background: rgba(255, 255, 255, 0.12); }
-.tools button.dim { opacity: 0.4; }
-
-.toasts { position: absolute; top: 72px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none !important; }
-.toast { display: flex; gap: 10px; align-items: center; padding: 9px 16px 9px 10px; animation: toast-in 0.35s ease-out; min-width: 220px; }
-.toast .ic { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: rgba(255, 179, 71, 0.2); font-size: 16px; }
+.toasts { position: absolute; top: calc(max(10px, env(safe-area-inset-top)) + 58px); left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none !important; width: max-content; max-width: calc(100% - 20px); }
+.toast { display: flex; gap: 10px; align-items: center; padding: 8px 14px 8px 8px; animation: toast-in 0.35s ease-out; }
+.toast .ic { width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center; background: rgba(255, 179, 71, 0.2); font-size: 15px; flex: none; }
 .toast b { font-size: 13.5px; display: block; }
 .toast small { color: var(--muted); font-size: 11.5px; }
 .toast.out { animation: toast-out 0.4s ease-in forwards; }
@@ -72,17 +72,33 @@ html, body { background: #0b0d14; }
 .stats { display: grid; grid-template-columns: auto auto; gap: 3px 16px; font-size: 12.5px; }
 .stats span { color: var(--muted); }
 .stats b { font-variant-numeric: tabular-nums; text-align: right; }
+/* Big screens show the dial; the top-bar number is for phones. */
+@media (pointer: fine) and (min-width: 761px) { .speed-top { visibility: hidden; } }
+@media (pointer: coarse), (max-width: 760px) { .gauge { display: none; } }
 
-.panel { position: absolute; right: 14px; bottom: 14px; padding: 12px 14px; min-width: 250px; }
-.panel .row { display: flex; align-items: center; gap: 10px; }
-.panel .fishcount { font-size: 28px; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
-.panel .ach { margin-left: auto; text-align: right; font-size: 11.5px; color: var(--muted); padding: 4px 8px; border-radius: 9px; }
-.panel .ach:hover { background: rgba(255, 255, 255, 0.1); }
-.panel .ach b { display: block; font-size: 14px; color: var(--text); }
-.panel .time { margin-top: 10px; }
-.panel input[type=range] { flex: 1; min-width: 0; width: 100px; accent-color: var(--accent); }
-.panel .clock { font-variant-numeric: tabular-nums; font-size: 13px; min-width: 42px; }
-.panel .pp { width: 28px; height: 28px; border-radius: 8px; background: rgba(255, 255, 255, 0.1); }
+/* Menu: opens under the top bar and pauses the game. */
+.menu { position: fixed; top: calc(max(10px, env(safe-area-inset-top)) + 56px); left: 10px; width: 360px; max-width: calc(100% - 20px); max-height: calc(100% - 80px); overflow: auto; padding: 14px 16px 16px; z-index: 4; background: var(--glass-strong); }
+.menu[hidden] { display: none; }
+.menu-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.menu-head b { display: block; font-size: 18px; }
+.menu-head .btn-primary { padding: 10px 20px; }
+.menu h4 { margin: 14px 0 6px; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+.menu-cams { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.menu-cams button { padding: 10px 6px; border-radius: 11px; font-size: 13px; background: rgba(255, 255, 255, 0.08) !important; }
+.menu-cams button.on { background: linear-gradient(135deg, var(--accent), var(--accent-2)) !important; color: #2b1606 !important; font-weight: 700; }
+.menu-time { display: flex; align-items: center; gap: 10px; }
+.menu-time input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); height: 28px; }
+.menu-time .clock { font-variant-numeric: tabular-nums; font-size: 14px; min-width: 44px; text-align: right; }
+.menu-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.menu-stats div { padding: 8px; border-radius: 11px; background: rgba(255, 255, 255, 0.06); text-align: center; }
+.menu-stats b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
+.menu-stats span { font-size: 11px; color: var(--muted); }
+.menu-tools { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 14px; }
+.menu-tools button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 2px 8px; border-radius: 12px; background: rgba(255, 255, 255, 0.08) !important; }
+.menu-tools button span { font-size: 20px; }
+.menu-tools button small { font-size: 10.5px; color: var(--muted); }
+.menu-tools button b { font-size: 11px; color: var(--accent); }
+.menu-tools button.dim span { opacity: 0.4; }
 
 .city-chip { display: inline-block; margin-top: 2px; padding: 1px 8px; border-radius: 99px; font-size: 10.5px; background: rgba(63, 208, 201, 0.18); color: var(--teal); }
 
@@ -142,15 +158,26 @@ kbd { display: inline-block; min-width: 18px; padding: 1px 6px; margin: 0 2px; b
 .flash.go { animation: flash 0.5s ease-out; }
 @keyframes flash { 0% { opacity: 0.8; } 100% { opacity: 0; } }
 
-.touch { position: absolute; bottom: 150px; left: 0; right: 0; display: none; justify-content: space-between; align-items: flex-end; padding: 0 16px; pointer-events: none !important; }
-.touch .cluster { display: flex; flex-direction: column; gap: 10px; align-items: center; }
-.touch .extras, .touch .main { display: flex; gap: 12px; pointer-events: auto; }
-.touch button { width: 62px; height: 62px; border-radius: 50%; font-size: 22px; background: var(--glass); border: 1px solid var(--line); touch-action: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); transition: transform 0.08s, background 0.08s; }
-.touch .extras button { width: 48px; height: 48px; font-size: 18px; }
-.touch button.held { transform: scale(0.92); background: rgba(255, 179, 71, 0.45); }
-.touch .t-gas { background: rgba(63, 208, 201, 0.28); }
-.touch .t-brake { background: rgba(255, 90, 78, 0.25); }
+/* Touch: four big pads with labels; the rare actions sit behind "+". */
+.touch { position: absolute; bottom: max(16px, env(safe-area-inset-bottom)); left: 0; right: 0; display: none; justify-content: space-between; align-items: flex-end; padding: 0 12px; pointer-events: none !important; }
+.touch .pads { display: flex; gap: 10px; pointer-events: auto; }
+.touch .right-side { position: relative; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.touch button { touch-action: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; transition: transform 0.08s, background 0.08s; }
+.touch .pad { width: 78px; height: 78px; border-radius: 22px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; background: var(--glass); border: 1px solid var(--line); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.touch .pad .i { font-size: 26px; line-height: 1; }
+.touch .pad small { font-size: 10.5px; color: var(--muted); letter-spacing: 0.04em; }
+.touch .t-gas { background: rgba(63, 208, 201, 0.3); }
+.touch .t-brake { background: rgba(255, 90, 78, 0.28); }
+.touch button.held { transform: scale(0.93); background: rgba(255, 179, 71, 0.45); }
+.touch .more { width: 48px; height: 48px; border-radius: 50%; font-size: 22px; pointer-events: auto; }
+.touch .more.on { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #2b1606; }
+.touch .extras-row { position: absolute; right: 0; bottom: 146px; display: flex; gap: 4px; padding: 6px; pointer-events: auto; }
+.touch .extras-row[hidden] { display: none; }
+.touch .extra { width: 56px; height: 58px; border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.touch .extra .i { font-size: 20px; line-height: 1; }
+.touch .extra small { font-size: 10px; color: var(--muted); }
 .touch .t-cruise.on { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #2b1606; }
+.touch .t-cruise.on small { color: #2b1606; }
 .touch-help { display: none; font-size: 12.5px; color: var(--muted); line-height: 1.7; margin-bottom: 4px; }
 @media (pointer: coarse) {
   .touch { display: flex; }
@@ -168,50 +195,34 @@ kbd { display: inline-block; min-width: 18px; padding: 1px 6px; margin: 0 2px; b
 }
 
 @media (max-width: 760px) {
-  .cams { top: 64px; max-width: calc(100% - 28px); overflow-x: auto; }
-  .cams button { padding: 6px 9px; font-size: 11.5px; }
-  .tools button { width: 30px; height: 30px; }
-  .badge small { display: none; }
-  .gauge { padding: 8px 12px 8px 8px; gap: 8px; }
-  .ring { width: 78px; height: 78px; }
-  .ring .num b { font-size: 24px; }
-  .stats { display: none; }
-  .panel { min-width: 0; width: 180px; padding: 8px 10px; }
-  .panel .clock { min-width: 36px; font-size: 12px; }
-  .hint { bottom: 250px; }
-  .touch { bottom: 112px; padding: 0 12px; }
-  .touch button { width: 56px; height: 56px; }
-  .touch .extras button { width: 44px; height: 44px; }
-  .toasts { top: 112px; }
   .card { padding: 18px 16px; }
   .card h1 { font-size: 28px; }
   .keys { display: none; }
+  .hint { bottom: 118px; }
+  .drawer { top: calc(max(10px, env(safe-area-inset-top)) + 56px); left: 10px; right: 10px; width: auto; max-height: calc(100% - 80px); }
+}
+@media (pointer: coarse) {
+  .hint { bottom: 118px; }
+}
+/* Very narrow phones: the camera button shows only its icon. */
+@media (max-width: 370px) {
+  .cam-btn span { display: none; }
+  .touch .pad { width: 70px; height: 70px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .intro-art * { animation: none !important; }
 }
-/* Phone held sideways: a short screen, so shrink the HUD and tuck the pads low.
-   Kept last so it beats the narrow-screen rules above, which also match most phones. */
+/* Phone held sideways: a short screen, so a slimmer top bar and smaller pads. */
 @media (pointer: coarse) and (max-height: 500px) {
-  .badge { top: 8px; left: 8px; padding: 6px 10px 6px 6px; }
-  .badge .logo { width: 28px; height: 28px; font-size: 16px; }
-  .badge small { display: none; }
-  .cams { top: 8px; max-width: calc(100% - 350px); }
-  .cams button { padding: 5px 7px; font-size: 11px; }
-  .tools { top: 8px; right: 8px; }
-  .tools button { width: 30px; height: 30px; font-size: 13px; }
-  .toasts { top: 52px; }
-  .toast { min-width: 0; padding: 6px 12px 6px 8px; }
-  .gauge { left: 50%; transform: translateX(-50%); bottom: 8px; padding: 6px 10px 6px 6px; gap: 8px; }
-  .ring { width: 64px; height: 64px; }
-  .ring .num b { font-size: 20px; }
-  .stats { display: none; }
-  .panel { top: 52px; bottom: auto; right: 8px; min-width: 0; width: 170px; padding: 6px 10px; }
-  .panel .fishcount { font-size: 20px; }
-  .panel .time { display: none; } /* time of day stays in Settings; the pads need the room */
-  .hint { bottom: 88px; }
-  .touch { bottom: 12px; padding: 0 14px; }
-  .touch button { width: 58px; height: 58px; }
-  .touch .extras button { width: 42px; height: 42px; }
-  .drawer { top: 50px; max-height: calc(100% - 60px); }
+  .topbar { top: 8px; }
+  .ico-btn, .cam-btn, .fish-chip { height: 40px; }
+  .ico-btn { width: 40px; }
+  .speed-top b { font-size: 28px; }
+  .toasts { top: 54px; }
+  .menu, .drawer { top: 54px; max-height: calc(100% - 62px); }
+  .hint { bottom: 20px; }
+  .touch { bottom: 10px; padding: 0 14px; }
+  .touch .pad { width: 68px; height: 68px; }
+  .touch .right-side { flex-direction: row; align-items: flex-end; }
+  .touch .extras-row { bottom: 78px; }
 }

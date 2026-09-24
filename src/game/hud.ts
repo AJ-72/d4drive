@@ -81,6 +81,8 @@ export interface HudCallbacks {
   camera(mode: CameraMode): void;
   setHour(h: number): void;
   togglePause(): void;
+  /** The menu opened (pause) or closed (resume). */
+  menu(open: boolean): void;
   screenshot(): void;
   toggleMusic(): void;
   share(): void;
@@ -91,8 +93,14 @@ export interface HudCallbacks {
 export class Hud {
   readonly root = el('div', 'd4');
   private readonly hud = el('div', '');
-  private readonly cityLabel = el('small');
+  private readonly cityLabel = el('span', 'city-chip');
   private readonly camButtons = new Map<CameraMode, HTMLButtonElement>();
+  private readonly camBtn = el('button');
+  private camMode: CameraMode = 'chase';
+  private readonly speedTop = el('b');
+  private readonly moreBtn = el('button');
+  private readonly menu = el('aside', 'menu glass');
+  private readonly menuStats = el('div', 'menu-stats');
   private readonly toasts = el('div', 'toasts');
   private readonly hint = el('div', 'hint glass');
   private readonly speedNum = el('b');
@@ -102,7 +110,6 @@ export class Hud {
   private readonly achNum = el('b');
   private readonly clock = el('span', 'clock');
   private readonly slider = el('input');
-  private readonly ppBtn = el('button', 'pp', '⏸');
   private readonly intro = el('section', 'overlay');
   private readonly pause = el('section', 'overlay');
   private readonly finish = el('section', 'overlay');
@@ -113,7 +120,7 @@ export class Hud {
   private readonly flashEl = el('div', 'flash');
   /** Oncoming high-beam dazzle, drawn over the whole view. */
   private readonly glareEl = el('div', 'glare');
-  private readonly musicBtn: HTMLButtonElement;
+  private musicBtn!: HTMLButtonElement;
   private sliderHeld = false;
   private introCity = 0;
   readonly touchButtons = new Map<string, HTMLButtonElement>();
@@ -128,44 +135,34 @@ export class Hud {
     this.introCity = initialCity;
     this.hud.id = 'hud';
     this.hud.classList.add('off');
-    this.root.append(this.glareEl, this.hud, this.intro, this.pause, this.finish, this.settingsDrawer, this.helpDrawer, this.achDrawer, this.fps, this.flashEl);
+    this.root.append(this.glareEl, this.hud, this.menu, this.intro, this.pause, this.finish, this.settingsDrawer, this.helpDrawer, this.achDrawer, this.fps, this.flashEl);
     host.appendChild(this.root);
 
-    // --- top bar ---
-    const badge = el('div', 'badge glass');
-    badge.append(el('div', 'logo', '🐦'));
-    const title = el('div');
-    title.append(el('b', '', 'D4Drive'), this.cityLabel);
-    badge.append(title);
-
-    const cams = el('div', 'cams glass');
-    for (const c of CAMERA_MODES) {
-      const b = el('button', '', c.label);
-      b.onclick = () => cb.camera(c.id);
-      this.camButtons.set(c.id, b);
-      cams.append(b);
-    }
-
-    const tools = el('div', 'tools glass');
-    const tool = (icon: string, tip: string, fn: () => void) => {
-      const b = el('button', '', icon);
-      b.title = tip;
-      b.setAttribute('aria-label', tip);
-      b.onclick = fn;
-      tools.append(b);
-      return b;
+    // --- top bar: only what a driver needs at a glance ---
+    // Everything else lives in the menu, which pauses the game while it is open.
+    const top = el('div', 'topbar');
+    const menuBtn = el('button', 'ico-btn glass', '☰');
+    menuBtn.setAttribute('aria-label', 'Menu (pauses)');
+    menuBtn.title = 'Menu (pauses)';
+    menuBtn.onclick = () => this.setMenu(this.menu.hidden);
+    this.camBtn.className = 'cam-btn glass';
+    this.camBtn.title = 'Change camera (C)';
+    this.camBtn.onclick = () => {
+      const i = CAMERA_MODES.findIndex((c) => c.id === this.camMode);
+      cb.camera(CAMERA_MODES[(i + 1) % CAMERA_MODES.length]!.id);
     };
-    tool('📸', 'Screenshot', () => cb.screenshot());
-    this.musicBtn = tool('🎵', 'Music on/off', () => cb.toggleMusic());
-    tool('🔗', 'Copy share link', () => cb.share());
-    tool('⛶', 'Fullscreen', () => {
-      if (document.fullscreenElement) void document.exitFullscreen();
-      else void document.documentElement.requestFullscreen?.();
-    });
-    tool('⚙️', 'Settings', () => this.toggleDrawer(this.settingsDrawer));
-    tool('？', 'Help', () => this.toggleDrawer(this.helpDrawer));
+    const speed = el('div', 'speed-top');
+    speed.append(this.speedTop, el('small', '', 'km/h'));
+    const fish = el('button', 'fish-chip glass');
+    fish.title = 'Fish caught';
+    fish.append(el('span', '', '🐟'), this.fishNum);
+    fish.onclick = () => this.setMenu(true);
+    top.append(menuBtn, this.camBtn, speed, fish);
 
-    // --- bottom-left gauge ---
+    // --- menu: cameras, time of day, tools, achievements, trip stats ---
+    this.buildMenu();
+
+    // --- bottom-left gauge (big screens only) ---
     const gauge = el('div', 'gauge glass');
     const R = 46;
     const C = 2 * Math.PI * R;
@@ -181,66 +178,53 @@ export class Hud {
     num.append(inner);
     ring.append(num);
     const stats = el('div', 'stats');
-    for (const [k, label] of [['rpm', 'RPM'], ['gear', 'Gear'], ['dist', 'Distance'], ['time', 'Time'], ['cam', 'Camera']]) {
+    for (const [k, label] of [['rpm', 'RPM'], ['gear', 'Gear'], ['dist', 'Distance'], ['time', 'Time']]) {
       const v = el('b');
       this.stat[k!] = v;
       stats.append(el('span', '', label), v);
     }
     gauge.append(ring, stats);
 
-    // --- bottom-right panel ---
-    const panel = el('div', 'panel glass');
-    const r1 = el('div', 'row');
-    const ach = el('button', 'ach');
-    ach.append(el('span', '', 'Achievements'), this.achNum);
-    ach.onclick = () => this.toggleDrawer(this.achDrawer);
-    r1.append(el('span', '', '<span style="font-size:22px">🐟</span>'), this.fishNum, ach);
-    const r2 = el('div', 'row time');
-    this.slider.type = 'range';
-    this.slider.min = '0';
-    this.slider.max = '24';
-    this.slider.step = '0.05';
-    this.slider.setAttribute('aria-label', 'Time of day');
-    this.slider.oninput = () => cb.setHour(Number(this.slider.value));
-    this.slider.onpointerdown = () => (this.sliderHeld = true);
-    this.slider.onpointerup = () => (this.sliderHeld = false);
-    this.ppBtn.onclick = () => cb.togglePause();
-    this.ppBtn.title = 'Pause (P)';
-    r2.append(el('span', '', '☀️'), this.slider, this.clock, this.ppBtn);
-    panel.append(r1, r2);
-
     // --- touch controls (shown on coarse pointers only) ---
-    // Left thumb steers; right thumb drives. Cruise holds the gas so the right thumb
-    // is free for jump and stunt, which otherwise would mean letting off the gas.
+    // Four big pads: steer on the left thumb, brake and gas on the right. The rarer
+    // actions sit behind one "+" button, so they cannot be hit by accident.
     const touch = el('div', 'touch');
-    const cluster = (extras: [string, string, string][], main: [string, string, string][]) => {
-      const c = el('div', 'cluster');
-      const top = el('div', 'extras');
-      const bottom = el('div', 'main');
-      for (const [row, list] of [[top, extras], [bottom, main]] as const) {
-        for (const [id, label, name] of list) {
-          const b = el('button', `t-${id}`, label);
-          b.setAttribute('aria-label', name);
-          this.touchButtons.set(id, b);
-          row.append(b);
-        }
-      }
-      c.append(top, bottom);
-      return c;
+    const pad = (id: string, icon: string, label: string, name: string) => {
+      const b = el('button', `pad t-${id}`, `<span class="i">${icon}</span><small>${label}</small>`);
+      b.setAttribute('aria-label', name);
+      this.touchButtons.set(id, b);
+      return b;
     };
-    touch.append(
-      cluster(
-        [['cruise', '⏩', 'Cruise (hold the gas)'], ['flash', '💡', 'Flash headlights'], ['horn', '📯', 'Horn']],
-        [['left', '◀', 'Steer left'], ['right', '▶', 'Steer right']],
-      ),
-      cluster(
-        [['stunt', '★', 'Stunt'], ['jump', '⤒', 'Jump']],
-        [['brake', '▼', 'Brake'], ['gas', '▲', 'Accelerate']],
-      ),
-    );
+    const leftPads = el('div', 'pads');
+    leftPads.append(pad('left', '◀', 'Left', 'Steer left'), pad('right', '▶', 'Right', 'Steer right'));
+    const rightSide = el('div', 'right-side');
+    const extras = el('div', 'extras-row glass');
+    extras.hidden = true;
+    for (const [id, icon, label, name] of [
+      ['cruise', '⏩', 'Cruise', 'Cruise (hold the gas)'],
+      ['flash', '💡', 'Lights', 'Flash headlights'],
+      ['horn', '📯', 'Horn', 'Horn'],
+      ['jump', '⤒', 'Jump', 'Jump'],
+      ['stunt', '★', 'Stunt', 'Stunt'],
+    ] as const) {
+      const b = el('button', `extra t-${id}`, `<span class="i">${icon}</span><small>${label}</small>`);
+      b.setAttribute('aria-label', name);
+      this.touchButtons.set(id, b);
+      // Close the row once the action has fired (the game acts on pointerdown).
+      b.addEventListener('pointerup', () => window.setTimeout(() => (extras.hidden = true), 120));
+      extras.append(b);
+    }
+    this.moreBtn.className = 'more glass';
+    this.moreBtn.innerHTML = '＋';
+    this.moreBtn.setAttribute('aria-label', 'More: cruise, lights, horn, jump, stunt');
+    this.moreBtn.onclick = () => (extras.hidden = !extras.hidden);
+    const rightPads = el('div', 'pads');
+    rightPads.append(pad('brake', '▼', 'Brake', 'Brake'), pad('gas', '▲', 'Gas', 'Accelerate'));
+    rightSide.append(extras, this.moreBtn, rightPads);
+    touch.append(leftPads, rightSide);
 
     this.hint.innerHTML = '🐟 Fish ahead <span class="arr">➜</span>';
-    this.hud.append(badge, cams, tools, this.toasts, this.hint, gauge, panel, touch);
+    this.hud.append(top, this.toasts, this.hint, gauge, touch);
 
     this.buildIntro(cityNames);
     this.buildPause();
@@ -252,6 +236,84 @@ export class Hud {
     this.achDrawer.hidden = true;
     this.pause.hidden = true;
     this.finish.hidden = true;
+    this.menu.hidden = true;
+  }
+
+  private buildMenu(): void {
+    const m = this.menu;
+    const head = el('div', 'menu-head');
+    const title = el('div');
+    title.append(el('b', '', 'Paused'), this.cityLabel);
+    const resume = el('button', 'btn-primary', 'Drive ▶');
+    resume.onclick = () => this.setMenu(false);
+    head.append(title, resume);
+    m.append(head);
+
+    m.append(el('h4', '', 'Camera'));
+    const cams = el('div', 'menu-cams');
+    for (const c of CAMERA_MODES) {
+      const b = el('button', '', c.label);
+      b.onclick = () => this.cb.camera(c.id);
+      this.camButtons.set(c.id, b);
+      cams.append(b);
+    }
+    m.append(cams);
+
+    m.append(el('h4', '', 'Time of day'));
+    const time = el('div', 'menu-time');
+    this.slider.type = 'range';
+    this.slider.min = '0';
+    this.slider.max = '24';
+    this.slider.step = '0.05';
+    this.slider.setAttribute('aria-label', 'Time of day');
+    this.slider.oninput = () => this.cb.setHour(Number(this.slider.value));
+    this.slider.onpointerdown = () => (this.sliderHeld = true);
+    this.slider.onpointerup = () => (this.sliderHeld = false);
+    time.append(el('span', '', '☀️'), this.slider, this.clock);
+    m.append(time);
+
+    m.append(el('h4', '', 'This drive'));
+    m.append(this.menuStats);
+
+    const grid = el('div', 'menu-tools');
+    const tool = (icon: string, label: string, fn: () => void) => {
+      const b = el('button', '', `<span>${icon}</span><small>${label}</small>`);
+      b.onclick = fn;
+      grid.append(b);
+      return b;
+    };
+    // Tools that open a panel close the menu (and so resume) first: the panels
+    // sit where the menu is.
+    const thenOpen = (d: HTMLElement) => () => {
+      this.setMenu(false);
+      this.toggleDrawer(d);
+    };
+    tool('🏆', 'Achievements', thenOpen(this.achDrawer)).append(this.achNum);
+    tool('⚙️', 'Settings', thenOpen(this.settingsDrawer));
+    tool('？', 'Help', thenOpen(this.helpDrawer));
+    this.musicBtn = tool('🎵', 'Music', () => this.cb.toggleMusic());
+    tool('📸', 'Photo', () => {
+      this.setMenu(false);
+      this.cb.screenshot();
+    });
+    tool('🔗', 'Share', () => this.cb.share());
+    tool('⛶', 'Full screen', () => {
+      if (document.fullscreenElement) void document.exitFullscreen();
+      else void document.documentElement.requestFullscreen?.();
+    });
+    m.append(grid);
+  }
+
+  /** Open or close the menu. The game pauses while it is open. */
+  setMenu(open: boolean): void {
+    if (this.menu.hidden === !open) return;
+    this.menu.hidden = !open;
+    if (open) for (const x of [this.settingsDrawer, this.helpDrawer, this.achDrawer]) x.hidden = true;
+    this.cb.menu(open);
+  }
+
+  get menuOpen(): boolean {
+    return !this.menu.hidden;
   }
 
   private toggleDrawer(d: HTMLElement): void {
@@ -261,8 +323,9 @@ export class Hud {
   }
 
   closeDrawers(): boolean {
-    const any = [this.settingsDrawer, this.helpDrawer, this.achDrawer].some((d) => !d.hidden);
+    const any = [this.settingsDrawer, this.helpDrawer, this.achDrawer].some((d) => !d.hidden) || this.menuOpen;
     for (const x of [this.settingsDrawer, this.helpDrawer, this.achDrawer]) x.hidden = true;
+    this.setMenu(false);
     return any;
   }
 
@@ -388,16 +451,20 @@ export class Hud {
   }
 
   setCity(name: string): void {
-    this.cityLabel.innerHTML = `Live 3D · <span class="city-chip">${name}</span>`;
+    this.cityLabel.textContent = name;
   }
 
   setCamera(mode: CameraMode): void {
+    this.camMode = mode;
     for (const [id, b] of this.camButtons) b.classList.toggle('on', id === mode);
-    this.stat['cam']!.textContent = CAMERA_MODES.find((c) => c.id === mode)!.label;
+    this.camBtn.innerHTML = `🎥 <span>${CAMERA_MODES.find((c) => c.id === mode)!.label}</span>`;
   }
 
   setCruise(on: boolean): void {
     this.touchButtons.get('cruise')?.classList.toggle('on', on);
+    // The extras row is usually closed: show cruise on the "+" as well.
+    this.moreBtn.classList.toggle('on', on);
+    this.moreBtn.innerHTML = on ? '⏩' : '＋';
   }
 
   setMusic(on: boolean): void {
@@ -406,13 +473,13 @@ export class Hud {
 
   setPaused(p: boolean): void {
     this.pause.hidden = !p;
-    this.ppBtn.textContent = p ? '▶' : '⏸';
   }
 
   update(d: { kmh: number; rpm: number; gear: number; distM: number; runSec: number; hour: number; fish: number; ach: number }): void {
     this.speedNum.textContent = String(Math.round(d.kmh));
+    this.speedTop.textContent = String(Math.round(d.kmh));
     const c = Number(this.ringVal.dataset['c']);
-    this.ringVal.setAttribute('stroke-dashoffset', String(c * (1 - Math.min(1, d.kmh / 110))));
+    this.ringVal.setAttribute('stroke-dashoffset', String(c * (1 - Math.min(1, d.kmh / 150))));
     this.stat['rpm']!.textContent = `${Math.round(d.rpm / 10) * 10}`;
     this.stat['gear']!.textContent = `${d.gear}/6`;
     this.stat['dist']!.textContent = `${(d.distM / 1000).toFixed(2)} km`;
@@ -420,6 +487,12 @@ export class Hud {
     this.fishNum.textContent = String(d.fish);
     this.achNum.textContent = `${d.ach}/${ACHIEVEMENTS.length}`;
     this.clock.textContent = fmtClock(d.hour);
+    if (this.menuOpen) {
+      this.menuStats.innerHTML =
+        `<div><b>${(d.distM / 1000).toFixed(2)} km</b><span>Distance</span></div>` +
+        `<div><b>${fmtTime(d.runSec)}</b><span>Time</span></div>` +
+        `<div><b>${d.fish}</b><span>Fish</span></div>`;
+    }
     if (!this.sliderHeld) this.slider.value = String(d.hour);
   }
 
@@ -439,7 +512,8 @@ export class Hud {
     if (sub) txt.append(el('small', '', sub));
     t.append(txt);
     this.toasts.append(t);
-    while (this.toasts.children.length > 3) this.toasts.firstChild?.remove();
+    // One message at a time: a stack of three covered the road ahead.
+    while (this.toasts.children.length > 1) this.toasts.firstChild?.remove();
     window.setTimeout(() => {
       t.classList.add('out');
       window.setTimeout(() => t.remove(), 400);
@@ -526,9 +600,9 @@ export class Hud {
   }
 }
 
-const TOUCH_HTML = `<b>On a phone:</b> turn it sideways for the widest view.<br>
-◀ ▶ steer · ▲ gas · ▼ brake · ⤒ jump · ★ stunt · 📯 horn · 💡 flash lights<br>
-⏩ cruise holds the gas for you, so your right thumb is free to jump.`;
+const TOUCH_HTML = `<b>On a phone:</b> ◀ ▶ steer with your left thumb, ▼ brake and ▲ gas with your right.<br>
+＋ opens cruise, lights, horn, jump and stunt. ⏩ Cruise holds the gas for you.<br>
+☰ opens the menu and pauses. 🎥 changes the camera.`;
 
 const KEYS_HTML = `<kbd>W</kbd><kbd>S</kbd> accelerate / brake &nbsp; <kbd>A</kbd><kbd>D</kbd> change lane &nbsp; <kbd>Space</kbd> jump &nbsp; <kbd>F</kbd> stunt<br>
 <kbd>B</kbd> horn &nbsp; <kbd>L</kbd> flash lights &nbsp; <kbd>H</kbd> pelican squawk &nbsp; <kbd>C</kbd> camera &nbsp; <kbd>T</kbd> switch city &nbsp; <kbd>N</kbd> skip 3 hours &nbsp; <kbd>P</kbd> pause &nbsp; <kbd>M</kbd> mute`;
